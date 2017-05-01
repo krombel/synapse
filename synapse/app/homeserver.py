@@ -65,6 +65,8 @@ from synapse.util.manhole import manhole
 
 from synapse.http.site import SynapseSite
 
+from synapse.websocket.websocket import SynapseWebsocketFactory
+
 from synapse import events
 
 from daemonize import Daemonize
@@ -223,6 +225,16 @@ class SynapseHomeServer(HomeServer):
                 bind_addresses = listener["bind_addresses"]
                 for address in bind_addresses:
                     factory = ReplicationStreamProtocolFactory(self)
+                    server_listener = reactor.listenTCP(
+                        listener["port"], factory, interface=address
+                    )
+                    reactor.addSystemEventTrigger(
+                        "before", "shutdown", server_listener.stopListening,
+                    )
+            elif listener["type"] == "websocket":
+                bind_addresses = listener["bind_addresses"]
+                for address in bind_addresses:
+                    factory = SynapseWebsocketFactory((address, listener["port"]), self)
                     server_listener = reactor.listenTCP(
                         listener["port"], factory, interface=address
                     )
