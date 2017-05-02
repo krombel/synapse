@@ -6,6 +6,7 @@ from synapse.api.errors import AuthError, Codes
 from synapse.api.filtering import FilterCollection, DEFAULT_FILTER_COLLECTION
 from synapse.rest.client.v2_alpha.sync import SyncRestServlet
 from synapse.handlers.sync import SyncConfig
+from synapse.types import StreamToken
 import logging
 import json
 logger = logging.getLogger("synapse.websocket")
@@ -49,8 +50,12 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             self.sendClose(3003, ERR_UNKNOWN_FAIL)
             logger.info("Closing due to unknown error %s" % ex)
             return
-
         logger.info("authenticated {0} ({1}) okay".format(user['user'], request.peer))
+
+        since = request.params.get("since", None)
+        if since is not None:
+            since = since[0].decode('utf-8')
+            self.since = StreamToken.from_string(since)
         self.access_token = access_token
         self.user = user
 
@@ -81,10 +86,11 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
 
     def _sync(self):
         sync_handler = self.factory.hs.get_sync_handler()
+
         request_key = (
             self.user['user'],
-            SYNC_TIMEOUT,
-            None if self.since is None else self.since.to_string(),
+            0,
+            None if self.since is None else self.since,
             None,
             self.full_state,
             self.user['device_id'],
@@ -97,13 +103,12 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             device_id=self.user['device_id'],
         )
         logger.debug("Syncing with %s" % str(self.since))
-        sync = sync_handler.wait_for_sync_for_user(
+        sync = defer.maybeDeferred(lambda: sync_handler.wait_for_sync_for_user(
             sync_config,
             since_token=self.since,
             timeout=SYNC_TIMEOUT,
             full_state=self.full_state
-        )
-        logger.debug(sync)
+        ))
         sync.addCallback(
             lambda result: self._handle_sync(result)
         )
@@ -156,10 +161,10 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         }
         self.sendMessage(json.dumps(response_content))
 
+
 class SynapseWebsocketFactory(WebSocketServerFactory):
-    def __init__(self, address, hs):
-        ws_address = create_url(address[0], port=address[1], isSecure=False)
-        super(SynapseWebsocketFactory, self).__init__(ws_address)
+    def __init__(self, hs):
+        super(SynapseWebsocketFactory, self).__init__()
         self.protocol = SynapseWebsocketProtocol
         self.hs = hs
         self.clients = []

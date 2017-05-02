@@ -40,6 +40,7 @@ from twisted.application import service
 from twisted.web.resource import Resource, EncodingResourceWrapper
 from twisted.web.static import File
 from twisted.web.server import GzipEncoderFactory
+from autobahn.twisted.resource import WebSocketResource
 from synapse.http.server import RootRedirect
 from synapse.rest.media.v0.content_repository import ContentRepoResource
 from synapse.rest.media.v1.media_repository import MediaRepositoryResource
@@ -123,6 +124,9 @@ class SynapseHomeServer(HomeServer):
             for name in res["names"]:
                 if name == "client":
                     client_resource = ClientRestResource(self)
+                    ws_factory = SynapseWebsocketFactory(self)
+                    ws_factory.startFactory()
+                    websocket_resource = WebSocketResource(ws_factory)
                     if res["compress"]:
                         client_resource = gz_wrap(client_resource)
 
@@ -132,6 +136,7 @@ class SynapseHomeServer(HomeServer):
                         "/_matrix/client/unstable": client_resource,
                         "/_matrix/client/v2_alpha": client_resource,
                         "/_matrix/client/versions": client_resource,
+                        "/_matrix/ws/r0": websocket_resource,
                     })
 
                 if name == "federation":
@@ -225,16 +230,6 @@ class SynapseHomeServer(HomeServer):
                 bind_addresses = listener["bind_addresses"]
                 for address in bind_addresses:
                     factory = ReplicationStreamProtocolFactory(self)
-                    server_listener = reactor.listenTCP(
-                        listener["port"], factory, interface=address
-                    )
-                    reactor.addSystemEventTrigger(
-                        "before", "shutdown", server_listener.stopListening,
-                    )
-            elif listener["type"] == "websocket":
-                bind_addresses = listener["bind_addresses"]
-                for address in bind_addresses:
-                    factory = SynapseWebsocketFactory((address, listener["port"]), self)
                     server_listener = reactor.listenTCP(
                         listener["port"], factory, interface=address
                     )
