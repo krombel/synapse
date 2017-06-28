@@ -40,6 +40,7 @@ from twisted.application import service
 from twisted.web.resource import Resource, EncodingResourceWrapper
 from twisted.web.static import File
 from twisted.web.server import GzipEncoderFactory
+from autobahn.twisted.resource import WebSocketResource
 from synapse.http.server import RootRedirect
 from synapse.rest.media.v0.content_repository import ContentRepoResource
 from synapse.rest.media.v1.media_repository import MediaRepositoryResource
@@ -64,6 +65,8 @@ from synapse.util.httpresourcetree import create_resource_tree
 from synapse.util.manhole import manhole
 
 from synapse.http.site import SynapseSite
+
+from synapse.websocket.websocket import SynapseWebsocketFactory
 
 from synapse import events
 
@@ -121,6 +124,9 @@ class SynapseHomeServer(HomeServer):
             for name in res["names"]:
                 if name == "client":
                     client_resource = ClientRestResource(self)
+                    ws_factory = SynapseWebsocketFactory(self)
+                    ws_factory.startFactory()
+                    websocket_resource = WebSocketResource(ws_factory)
                     if res["compress"]:
                         client_resource = gz_wrap(client_resource)
 
@@ -130,6 +136,7 @@ class SynapseHomeServer(HomeServer):
                         "/_matrix/client/unstable": client_resource,
                         "/_matrix/client/v2_alpha": client_resource,
                         "/_matrix/client/versions": client_resource,
+                        "/_matrix/ws/r0": websocket_resource,
                     })
 
                 if name == "federation":
