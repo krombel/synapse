@@ -164,27 +164,32 @@ class SyncRestServlet(RestServlet):
             )
 
         time_now = self.clock.time_msec()
+        response_content = self.encode_response(time_now, sync_result, requester.access_token_id, filter)
 
-        joined = self.encode_joined(
-            sync_result.joined, time_now, requester.access_token_id, filter.event_fields
+        defer.returnValue((200, response_content))
+
+    @staticmethod
+    def encode_response(time_now, sync_result, access_token_id, filter):
+        joined = SyncRestServlet.encode_joined(
+            sync_result.joined, time_now, access_token_id, filter.event_fields
         )
 
-        invited = self.encode_invited(
-            sync_result.invited, time_now, requester.access_token_id
+        invited = SyncRestServlet.encode_invited(
+            sync_result.invited, time_now, access_token_id
         )
 
-        archived = self.encode_archived(
-            sync_result.archived, time_now, requester.access_token_id,
+        archived = SyncRestServlet.encode_archived(
+            sync_result.archived, time_now, access_token_id,
             filter.event_fields,
         )
 
-        response_content = {
+        return {
             "account_data": {"events": sync_result.account_data},
             "to_device": {"events": sync_result.to_device},
             "device_lists": {
                 "changed": list(sync_result.device_lists),
             },
-            "presence": self.encode_presence(
+            "presence": SyncRestServlet.encode_presence(
                 sync_result.presence, time_now
             ),
             "rooms": {
@@ -195,8 +200,6 @@ class SyncRestServlet(RestServlet):
             "device_one_time_keys_count": sync_result.device_one_time_keys_count,
             "next_batch": sync_result.next_batch.to_string(),
         }
-
-        defer.returnValue((200, response_content))
 
     @staticmethod
     def encode_presence(events, time_now):
