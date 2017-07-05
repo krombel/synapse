@@ -78,6 +78,9 @@ CONDITIONAL_REQUIREMENTS = {
     "affinity": {
         "affinity": ["affinity"],
     },
+    "websocket": {
+        "autobahn": ["autobahn"],
+    },
 }
 
 
