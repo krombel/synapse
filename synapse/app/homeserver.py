@@ -136,7 +136,7 @@ class SynapseHomeServer(HomeServer):
                         "/_matrix/client/unstable": client_resource,
                         "/_matrix/client/v2_alpha": client_resource,
                         "/_matrix/client/versions": client_resource,
-                        "/_matrix/ws/r0": websocket_resource,
+                        "/_matrix/client/ws/r0": websocket_resource,
                     })
 
                 if name == "federation":
