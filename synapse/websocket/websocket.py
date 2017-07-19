@@ -1,14 +1,15 @@
 from twisted.internet import defer, reactor
 from autobahn.twisted.websocket import WebSocketServerProtocol, \
     WebSocketServerFactory
-from autobahn.websocket.util import create_url
-from autobahn.websocket.compress import PerMessageDeflateOffer, PerMessageDeflateOfferAccept
-from synapse.api.errors import AuthError, Codes
+from autobahn.websocket.compress import PerMessageDeflateOffer, \
+    PerMessageDeflateOfferAccept
+from synapse.api.constants import EventTypes
+from synapse.api.errors import AuthError, SynapseError
 from synapse.api.filtering import FilterCollection, DEFAULT_FILTER_COLLECTION
+from synapse.handlers.sync import SyncConfig
 from synapse.rest.client.v2_alpha._base import set_timeline_upper_limit
 from synapse.rest.client.v2_alpha.sync import SyncRestServlet
-from synapse.handlers.sync import SyncConfig
-from synapse.types import StreamToken, create_requester
+from synapse.types import StreamToken, UserID, create_requester
 import logging
 import json
 logger = logging.getLogger("synapse.websocket")
@@ -45,11 +46,11 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         try:
             user = yield auth.get_user_by_access_token(access_token)
             self.requester = create_requester(
-                    user["user"],
-                    user["token_id"],
-                    user["is_guest"],
-                    user.get("device_id"),
-                    app_service=None
+                user["user"],
+                user["token_id"],
+                user["is_guest"],
+                user.get("device_id"),
+                app_service=None
             )
         except AuthError as ex:
             self.sendClose(3002, ERR_UNKNOWN_AT)
@@ -76,8 +77,10 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             if filter_id.startswith('{'):
                 try:
                     filter_object = json.loads(filter_id)
-                    set_timeline_upper_limit(filter_object,
-                        self.factory.hs.config.filter_timeline_limit)
+                    set_timeline_upper_limit(
+                        filter_object,
+                        self.factory.hs.config.filter_timeline_limit
+                    )
                 except:
                     raise SynapseError(400, "Invalid filter JSON")
                 self.factory.filtering.check_valid_filter(filter_object)
@@ -99,12 +102,12 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
     def onMessage(self, payload, isBinary):
         if isBinary:
             logger.info("Binary message received: {0} bytes".format(len(payload)))
-            return  # Ignore binary for now, but perhaps support something like BSON in the future.
+            return  # Ignore binary for now
         else:
             try:
                 logger.info("Text message received: {0}".format(payload.decode('utf8')))
-            except Exception as ex:
-                logger.info("Text message received (unparseable)", ex)
+            except Exception:
+                logger.info("Text message received (unparseable)")
 
         msg = {}
         try:
@@ -114,21 +117,43 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             return
 
         supported_methods = {
-            "ping":         self._handle_ping,
+            "ping": self._handle_ping,
+            "presence": self._handle_presence,
             "read_markers": self._handle_read_markers,
-            "send":         self._handle_send,
-            "typing":       self._handle_typing,
+            "send": self._handle_send,
+            "typing": self._handle_typing,
         }
 
-        method = supported_methods.get(msg["method"],
+        method = supported_methods.get(
+            msg["method"],
             lambda msg: json.dumps({
                 "id": msg["id"],
-                "errorcode": "M_BAD_JSON",
-                "error": "Unknown method"
+                "error": {
+                    "errcode": "M_BAD_JSON",
+                    "error": "Unknown method",
+                }
             })
         )
-        result = yield method(msg)
-        self.sendMessage(result)
+
+        try:
+            result = yield method(msg)
+            self.sendMessage(result)
+        except SynapseError as ex:
+            self.sendMessage(json.dumps({
+                "id": msg["id"],
+                "error": {
+                    "errcode": ex.errcode,
+                    "error": ex.msg,
+                }
+            }))
+        except Exception as ex:
+            self.sendMessage(json.dumps({
+                "id": msg["id"],
+                "error": {
+                    "errcode": "M_UNKNOWN",
+                    "error": ex,
+                }
+            }))
 
     def onClose(self, wasClean, code, reason):
         logger.info("WebSocket connection closed: {0} {1}".format(code, reason))
@@ -148,7 +173,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
 
         request_key = (
             self.requester.user,
-            0, # timeout
+            0,  # timeout
             self.since,
             self.filter_id,
             self.full_state if initial else False,
@@ -187,7 +212,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
                 result,
                 self.requester.access_token_id,
                 self.filter
-            )),False)
+            )), False)
 
             reactor.callLater(0, lambda: self._sync())
 
@@ -196,6 +221,32 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
     @defer.inlineCallbacks
     def _handle_ping(self, msg):
         yield logger.debug("Execute _handle_ping")
+        defer.returnValue(bytes('{"id":"' + msg["id"] + '","result":{}}'))
+
+    @defer.inlineCallbacks
+    def _handle_presence(self, msg):
+        yield logger.debug("Execute _handle_presence")
+
+        state = {}
+
+        content = msg["params"]
+
+        try:
+            state["presence"] = content.pop("presence")
+
+            if "status_msg" in content:
+                state["status_msg"] = content.pop("status_msg")
+                if not isinstance(state["status_msg"], basestring):
+                    raise SynapseError(400, "status_msg must be a string.")
+
+            if content:
+                raise KeyError()
+        except SynapseError as e:
+            raise e
+        except:
+            raise SynapseError(400, "Unable to parse state")
+
+        yield self.presence_handler.set_state(self.requester.user, state)
         defer.returnValue(bytes('{"id":"' + msg["id"] + '","result":{}}'))
 
     @defer.inlineCallbacks
@@ -230,7 +281,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         logger.debug("Execute _handle_send")
         params = msg["params"]
 
-        event = yield self.factory.handlers.message_handler.create_and_send_nonmember_event(
+        event = yield self.factory.message_handler.create_and_send_nonmember_event(
             self.requester,
             {
                 "type": params["event_type"],
@@ -243,7 +294,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
 
         defer.returnValue(json.dumps({
             "id": msg["id"],
-            "result":{
+            "result": {
                 "event_id": event.event_id
             }
         }))
@@ -254,13 +305,13 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         params = msg["params"]
 
         event_dict = {
-                "type": params["event_type"],
-                "content": params["content"],
-                "room_id": params["room_id"],
-                "sender": self.requester.user.to_string(),
+            "type": params["event_type"],
+            "content": params["content"],
+            "room_id": params["room_id"],
+            "sender": self.requester.user.to_string(),
         }
         if params["state_key"] is not None:
-		 event_dict["state_key"] = params["state_key"]
+            event_dict["state_key"] = params["state_key"]
 
         if params["event_type"] == EventTypes.Member:
             membership = params["content"].get("membership", None)
@@ -293,7 +344,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
     @defer.inlineCallbacks
     def _handle_typing(self, msg):
         logger.info("Execute _handle_typing")
-	params = msg["params"]
+        params = msg["params"]
 
         # Limit timeout to stop people from setting silly typing timeouts.
         timeout = min(params.get("timeout", 30000), 120000)
@@ -316,6 +367,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
 
         defer.returnValue(bytes('{"id":"' + msg["id"] + '","result":{}}'))
 
+
 class SynapseWebsocketFactory(WebSocketServerFactory):
     def __init__(self, hs):
         super(SynapseWebsocketFactory, self).__init__()
@@ -325,6 +377,7 @@ class SynapseWebsocketFactory(WebSocketServerFactory):
         self.clock = hs.get_clock()
         self.filtering = hs.get_filtering()
         self.handlers = hs.get_handlers()
+        self.message_handler = self.handlers.message_handler
         self.presence_handler = hs.get_presence_handler()
         self.receipts_handler = hs.get_receipts_handler()
         self.read_marker_handler = hs.get_read_marker_handler()
