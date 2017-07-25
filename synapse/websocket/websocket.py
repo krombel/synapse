@@ -62,6 +62,22 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             return
         logger.info("authenticated {0} ({1}) okay".format(user['user'], request.peer))
 
+        if self.factory.proxied:
+            ip_addr = request.headers.get('x-forwarded-for', request.host)
+        else:
+            ip_addr = request.host
+
+        user_agent = request.headers.get("user-agent", [""])[0]
+
+        if user and access_token and ip_addr:
+            self.factory.hs.get_datastore().insert_client_ip(
+                user_id=user["user"].to_string(),
+                access_token=access_token,
+                ip=ip_addr,
+                user_agent=user_agent,
+                device_id=user.get("device_id"),
+            )
+
         full_state = request.params.get("full_state", None)
         if full_state is not None:
             self.full_state = full_state[0]
@@ -71,7 +87,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             since = since[0].decode('utf-8')
             self.since = StreamToken.from_string(since)
 
-        filter_id = request.params.get("filter", None)
+        filter_id = request.params.get("filter", [None])
         if filter_id[0]:
             filter_id = filter_id[0]
             if filter_id.startswith('{'):
@@ -393,11 +409,16 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
 
 
 class SynapseWebsocketFactory(WebSocketServerFactory):
-    def __init__(self, hs):
+    def __init__(self, hs, config, compress):
         super(SynapseWebsocketFactory, self).__init__()
         self.protocol = SynapseWebsocketProtocol
-        self.setProtocolOptions(perMessageCompressionAccept=self.accept)
         self.hs = hs
+        self.config = config
+        self.proxied = config.get("x_forwarded", False)
+
+        if compress:
+            self.setProtocolOptions(perMessageCompressionAccept=self.accept_compress)
+
         self.clock = hs.get_clock()
         self.filtering = hs.get_filtering()
         self.handlers = hs.get_handlers()
@@ -409,7 +430,7 @@ class SynapseWebsocketFactory(WebSocketServerFactory):
         self.clients = []
 
     @staticmethod
-    def accept(offers):
+    def accept_compress(offers):
         for offer in offers:
             if isinstance(offer, PerMessageDeflateOffer):
                 return PerMessageDeflateOfferAccept(offer)

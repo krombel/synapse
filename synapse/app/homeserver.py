@@ -124,9 +124,6 @@ class SynapseHomeServer(HomeServer):
             for name in res["names"]:
                 if name == "client":
                     client_resource = ClientRestResource(self)
-                    ws_factory = SynapseWebsocketFactory(self)
-                    ws_factory.startFactory()
-                    websocket_resource = WebSocketResource(ws_factory)
                     if res["compress"]:
                         client_resource = gz_wrap(client_resource)
 
@@ -136,6 +133,17 @@ class SynapseHomeServer(HomeServer):
                         "/_matrix/client/unstable": client_resource,
                         "/_matrix/client/v2_alpha": client_resource,
                         "/_matrix/client/versions": client_resource,
+                    })
+
+                if name == "websocket":
+                    compress = False
+                    if res["compress"]:
+                        compress = True
+
+                    ws_factory = SynapseWebsocketFactory(self, listener_config, compress)
+                    ws_factory.startFactory()
+                    websocket_resource = WebSocketResource(ws_factory)
+                    resources.update({
                         "/_matrix/client/ws/r0": websocket_resource,
                     })
 
