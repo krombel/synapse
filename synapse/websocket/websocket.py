@@ -34,7 +34,14 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         self.currentSync = None
         logger.info("connecting: {0}".format(request.peer))
 
-        logger.info("Checking access_token for {0}".format(request.peer))
+        if self.factory.proxied:
+            ip_addr = request.headers.get('x-forwarded-for', request.host)
+        else:
+            ip_addr = request.host
+
+        user_agent = request.headers.get("user-agent", [""])[0]
+
+        logger.info("Checking access_token for {0}".format(ip_addr))
         access_token = request.params.get("access_token", None)
         if access_token is None:
             self.sendClose(3001, ERR_NO_AT)
@@ -60,23 +67,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             self.sendClose(3003, ERR_UNKNOWN_FAIL)
             logger.info("Closing due to unknown error %s" % ex)
             return
-        logger.info("authenticated {0} ({1}) okay".format(user['user'], request.peer))
-
-        if self.factory.proxied:
-            ip_addr = request.headers.get('x-forwarded-for', request.host)
-        else:
-            ip_addr = request.host
-
-        user_agent = request.headers.get("user-agent", [""])[0]
-
-        if user and access_token and ip_addr:
-            self.factory.hs.get_datastore().insert_client_ip(
-                user_id=user["user"].to_string(),
-                access_token=access_token,
-                ip=ip_addr,
-                user_agent=user_agent,
-                device_id=user.get("device_id"),
-            )
+        logger.info("authenticated {0} ({1}) okay".format(user['user'], ip_addr))
 
         full_state = request.params.get("full_state", None)
         if full_state is not None:
@@ -107,10 +98,16 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
                 )
             self.filter_id = filter_id
 
-        presence = request.params.get("presence", [PresenceState.ONLINE])
-        if presence and presence[0]:
-            presence = presence[0]
+        if user and access_token and ip_addr:
+            self.factory.hs.get_datastore().insert_client_ip(
+                user_id=user["user"].to_string(),
+                access_token=access_token,
+                ip=ip_addr,
+                user_agent=user_agent,
+                device_id=user.get("device_id"),
+            )
 
+        presence = request.params.get("presence", [PresenceState.ONLINE])[0]
         logger.debug("Presence should be: %s" % presence)
         if presence != PresenceState.OFFLINE:
             yield self.factory.presence_handler.set_state(
@@ -128,13 +125,13 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
     @defer.inlineCallbacks
     def onMessage(self, payload, isBinary):
         if isBinary:
-            logger.info("Binary message received: {0} bytes".format(len(payload)))
+            logger.debug("Binary message received: {0} bytes".format(len(payload)))
             return  # Ignore binary for now
         else:
             try:
-                logger.info("Text message received: {0}".format(payload.decode('utf8')))
+                logger.debug("Text message received: {0}".format(payload.decode('utf8')))
             except Exception:
-                logger.info("Text message received (unparseable)")
+                logger.debug("Text message received (unparseable)")
 
         msg = {}
         try:
@@ -383,7 +380,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
 
     @defer.inlineCallbacks
     def _handle_typing(self, msg):
-        logger.info("Execute _handle_typing")
+        logger.debug("Execute _handle_typing")
         params = msg["params"]
 
         # Limit timeout to stop people from setting silly typing timeouts.
