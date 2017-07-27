@@ -60,3 +60,6 @@ Niklas Riekenbrauck <nikriek at gmail dot.com>
 
 Christoph Witzany <christoph at web.crofting.com>
  * Add LDAP support for authentication
+
+Matthias Kesler <krombel at krombel dot.de>
+ * Add WebSocket support

@@ -40,7 +40,6 @@ from twisted.application import service
 from twisted.web.resource import Resource, EncodingResourceWrapper
 from twisted.web.static import File
 from twisted.web.server import GzipEncoderFactory
-from autobahn.twisted.resource import WebSocketResource
 from synapse.http.server import RootRedirect
 from synapse.rest.media.v0.content_repository import ContentRepoResource
 from synapse.rest.media.v1.media_repository import MediaRepositoryResource
@@ -66,6 +65,7 @@ from synapse.util.manhole import manhole
 
 from synapse.http.site import SynapseSite
 
+from autobahn.twisted.resource import WebSocketResource
 from synapse.websocket.websocket import SynapseWebsocketFactory
 
 from synapse import events
