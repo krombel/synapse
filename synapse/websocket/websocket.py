@@ -5,9 +5,9 @@ from autobahn.websocket.compress import PerMessageDeflateOffer, \
     PerMessageDeflateOfferAccept
 from synapse.api.constants import EventTypes, PresenceState
 from synapse.api.errors import AuthError, Codes, SynapseError
-from synapse.api.filtering import FilterCollection, DEFAULT_FILTER_COLLECTION
+from synapse.api.filtering import FilterCollection, DEFAULT_FILTER_COLLECTION, \
+    set_timeline_upper_limit
 from synapse.handlers.sync import SyncConfig
-from synapse.rest.client.v2_alpha._base import set_timeline_upper_limit
 from synapse.rest.client.v2_alpha.sync import SyncRestServlet
 from synapse.types import StreamToken, UserID, create_requester
 import logging
