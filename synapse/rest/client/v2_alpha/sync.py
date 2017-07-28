@@ -24,16 +24,12 @@ from synapse.types import StreamToken
 from synapse.events.utils import (
     serialize_event, format_event_for_client_v2_without_room_id,
 )
-from synapse.api.filtering import FilterCollection, DEFAULT_FILTER_COLLECTION
 from synapse.api.errors import SynapseError
 from synapse.api.constants import PresenceState
 from ._base import client_v2_patterns
-from ._base import set_timeline_upper_limit
 
 import itertools
 import logging
-
-import ujson as json
 
 logger = logging.getLogger(__name__)
 
@@ -119,22 +115,7 @@ class SyncRestServlet(RestServlet):
 
         request_key = (user, timeout, since, filter_id, full_state, device_id)
 
-        if filter_id:
-            if filter_id.startswith('{'):
-                try:
-                    filter_object = json.loads(filter_id)
-                    set_timeline_upper_limit(filter_object,
-                                             self.hs.config.filter_timeline_limit)
-                except:
-                    raise SynapseError(400, "Invalid filter JSON")
-                self.filtering.check_valid_filter(filter_object)
-                filter = FilterCollection(filter_object)
-            else:
-                filter = yield self.filtering.get_user_filter(
-                    user.localpart, filter_id
-                )
-        else:
-            filter = DEFAULT_FILTER_COLLECTION
+        filter = yield self.filtering.parse_filter(filter_id, user.localpart)
 
         sync_config = SyncConfig(
             user=user,
