@@ -20,7 +20,7 @@ from synapse.http.servlet import RestServlet, parse_json_object_from_request
 from synapse.types import UserID
 
 from ._base import client_v2_patterns
-from ._base import set_timeline_upper_limit
+from synapse.api.filtering import set_timeline_upper_limit
 
 import logging
 
