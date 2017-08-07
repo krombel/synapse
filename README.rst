@@ -725,6 +725,15 @@ so an example nginx configuration might look like::
           proxy_pass http://localhost:8008;
           proxy_set_header X-Forwarded-For $remote_addr;
       }
+
+      location /_matrix/client/ws {
+          proxy_pass http://localhost:8008/_matrix/client/ws;
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_set_header X-Forwarded-For $remote_addr;
+      }
+
   }
 
 You will also want to set ``bind_addresses: ['127.0.0.1']`` and ``x_forwarded: true``
