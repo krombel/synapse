@@ -78,9 +78,8 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             since = since[0].decode('utf-8')
             self.since = StreamToken.from_string(since)
 
-        filter_id = request.params.get("filter", [None])
-        if filter_id[0]:
-            filter_id = filter_id[0]
+        filter_id = request.params.get("filter", [None])[0]
+        if filter_id:
             if filter_id.startswith('{'):
                 try:
                     filter_object = json.loads(filter_id)
@@ -115,7 +114,17 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             )
         self.presence = presence
 
-        defer.returnValue(("m.json"))
+        if request.protocols:
+            if "m.json" in request.protocols:
+                defer.returnValue(("m.json"))
+            else:
+                msg = "None of the passed websocket protocols is allowed ({0})".format(
+                    json.dumps(request.protocols)
+                )
+                raise Exception(msg)
+        else:
+            # No protocol was passed so just allow handling
+            defer.returnValue(None)
 
     def onOpen(self):
         logger.info("New connection.")
@@ -145,6 +154,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             "presence": self._handle_presence,
             "read_markers": self._handle_read_markers,
             "send": self._handle_send,
+            "state": self._handle_state,
             "typing": self._handle_typing,
         }
 
