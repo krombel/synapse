@@ -1,3 +1,25 @@
+Changes in synapse v0.23.1 (2017-10-02)
+=======================================
+
+Changes:
+
+* Make 'affinity' package optional, as it is not supported on some platforms
+
+
+Changes in synapse v0.23.0 (2017-10-02)
+=======================================
+
+No changes since v0.23.0-rc2
+
+
+Changes in synapse v0.23.0-rc2 (2017-09-26)
+===========================================
+
+Bug fixes:
+
+* Fix regression in performance of syncs (PR #2470)
+
+
 Changes in synapse v0.23.0-rc1 (2017-09-25)
 ===========================================
 
