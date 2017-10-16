@@ -187,9 +187,20 @@ class SyncRestServlet(RestServlet):
                 sync_result.archived, time_now, access_token_id,
                 filter.event_fields,
             )
-
         if rooms:
             response["rooms"] = rooms
+
+        groups = {}
+        if sync_result.groups:
+            if sync_result.groups.join:
+                groups["join"] = sync_result.groups.join
+            if sync_result.groups.invite:
+                groups["invite"] = sync_result.groups.invite
+            if sync_result.groups.leave:
+                groups["leave"] = sync_result.groups.leave
+
+        if groups:
+            response["groups"] = groups
 
         return response
 
