@@ -835,8 +835,8 @@ class FederationGroupsRenewAttestaionServlet(BaseFederationServlet):
     def on_POST(self, origin, content, query, group_id, user_id):
         # We don't need to check auth here as we check the attestation signatures
 
-        new_content = yield self.handler.on_renew_group_attestation(
-            origin, content, group_id, user_id
+        new_content = yield self.handler.on_renew_attestation(
+            group_id, user_id, content
         )
 
         defer.returnValue((200, new_content))
