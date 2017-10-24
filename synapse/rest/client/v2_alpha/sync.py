@@ -125,7 +125,7 @@ class SyncRestServlet(RestServlet):
                     filter_object = json.loads(filter_id)
                     set_timeline_upper_limit(filter_object,
                                              self.hs.config.filter_timeline_limit)
-                except:
+                except Exception:
                     raise SynapseError(400, "Invalid filter JSON")
                 self.filtering.check_valid_filter(filter_object)
                 filter = FilterCollection(filter_object)
@@ -209,6 +209,18 @@ class SyncRestServlet(RestServlet):
 
         if rooms:
             response["rooms"] = rooms
+
+        groups = {}
+        if sync_result.groups:
+            if sync_result.groups.join:
+                groups["join"] = sync_result.groups.join
+            if sync_result.groups.invite:
+                groups["invite"] = sync_result.groups.invite
+            if sync_result.groups.leave:
+                groups["leave"] = sync_result.groups.leave
+
+        if groups:
+            response["groups"] = groups
 
         return response
 
