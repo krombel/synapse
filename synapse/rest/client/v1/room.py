@@ -238,7 +238,7 @@ class JoinRoomAliasServlet(ClientV1RestServlet):
 
         try:
             content = parse_json_object_from_request(request)
-        except:
+        except Exception:
             # Turns out we used to ignore the body entirely, and some clients
             # cheekily send invalid bodies.
             content = {}
@@ -247,7 +247,7 @@ class JoinRoomAliasServlet(ClientV1RestServlet):
             room_id = room_identifier
             try:
                 remote_room_hosts = request.args["server_name"]
-            except:
+            except Exception:
                 remote_room_hosts = None
         elif RoomAlias.is_valid(room_identifier):
             handler = self.handlers.room_member_handler
@@ -398,22 +398,18 @@ class JoinedRoomMemberListRestServlet(ClientV1RestServlet):
 
     def __init__(self, hs):
         super(JoinedRoomMemberListRestServlet, self).__init__(hs)
-        self.state = hs.get_state_handler()
+        self.message_handler = hs.get_handlers().message_handler
 
     @defer.inlineCallbacks
     def on_GET(self, request, room_id):
-        yield self.auth.get_user_by_req(request)
+        requester = yield self.auth.get_user_by_req(request)
 
-        users_with_profile = yield self.state.get_current_user_in_room(room_id)
+        users_with_profile = yield self.message_handler.get_joined_members(
+            requester, room_id,
+        )
 
         defer.returnValue((200, {
-            "joined": {
-                user_id: {
-                    "avatar_url": profile.avatar_url,
-                    "display_name": profile.display_name,
-                }
-                for user_id, profile in users_with_profile.iteritems()
-            }
+            "joined": users_with_profile,
         }))
 
 
@@ -591,7 +587,7 @@ class RoomMembershipRestServlet(ClientV1RestServlet):
 
         try:
             content = parse_json_object_from_request(request)
-        except:
+        except Exception:
             # Turns out we used to ignore the body entirely, and some clients
             # cheekily send invalid bodies.
             content = {}
