@@ -208,7 +208,7 @@ class Filtering(object):
                     filter_object = json.loads(filter_data)
                     set_timeline_upper_limit(filter_object,
                                              self.filter_timeline_limit)
-                except:
+                except Exception:
                     raise SynapseError(400, "Invalid filter JSON")
                 self.check_valid_filter(filter_object)
                 filter = FilterCollection(filter_object)
