@@ -443,12 +443,12 @@ def _check_power_levels(event, auth_events):
     for k, v in user_list.items():
         try:
             UserID.from_string(k)
-        except:
+        except Exception:
             raise SynapseError(400, "Not a valid user_id: %s" % (k,))
 
         try:
             int(v)
-        except:
+        except Exception:
             raise SynapseError(400, "Not a valid power level: %s" % (v,))
 
     key = (event.type, event.state_key, )
@@ -470,14 +470,14 @@ def _check_power_levels(event, auth_events):
         ("invite", None),
     ]
 
-    old_list = current_state.content.get("users")
+    old_list = current_state.content.get("users", {})
     for user in set(old_list.keys() + user_list.keys()):
         levels_to_check.append(
             (user, "users")
         )
 
-    old_list = current_state.content.get("events")
-    new_list = event.content.get("events")
+    old_list = current_state.content.get("events", {})
+    new_list = event.content.get("events", {})
     for ev_id in set(old_list.keys() + new_list.keys()):
         levels_to_check.append(
             (ev_id, "events")
