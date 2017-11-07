@@ -35,7 +35,9 @@ class GroupServerStore(SQLBaseStore):
             keyvalues={
                 "group_id": group_id,
             },
-            retcols=("name", "short_description", "long_description", "avatar_url",),
+            retcols=(
+                "name", "short_description", "long_description", "avatar_url", "is_public"
+            ),
             allow_none=True,
             desc="is_user_in_group",
         )
@@ -52,7 +54,7 @@ class GroupServerStore(SQLBaseStore):
         return self._simple_select_list(
             table="group_users",
             keyvalues=keyvalues,
-            retcols=("user_id", "is_public",),
+            retcols=("user_id", "is_public", "is_admin",),
             desc="get_users_in_group",
         )
 
@@ -844,19 +846,25 @@ class GroupServerStore(SQLBaseStore):
             )
         return self.runInteraction("remove_user_from_group", _remove_user_from_group_txn)
 
-    def add_room_to_group(self, group_id, room_id, is_public):
-        return self._simple_insert(
+    def update_room_group_association(self, group_id, room_id, is_public):
+        return self._simple_upsert(
             table="group_rooms",
-            values={
+            keyvalues={
                 "group_id": group_id,
                 "room_id": room_id,
+            },
+            values={
                 "is_public": is_public,
             },
-            desc="add_room_to_group",
+            insertion_values={
+                "group_id": group_id,
+                "room_id": room_id,
+            },
+            desc="update_room_group_association",
         )
 
-    def remove_room_from_group(self, group_id, room_id):
-        def _remove_room_from_group_txn(txn):
+    def delete_room_group_association(self, group_id, room_id):
+        def _delete_room_group_association_txn(txn):
             self._simple_delete_txn(
                 txn,
                 table="group_rooms",
@@ -875,7 +883,7 @@ class GroupServerStore(SQLBaseStore):
                 },
             )
         return self.runInteraction(
-            "remove_room_from_group", _remove_room_from_group_txn,
+            "delete_room_group_association", _delete_room_group_association_txn,
         )
 
     def get_publicised_groups_for_user(self, user_id):
@@ -1026,6 +1034,7 @@ class GroupServerStore(SQLBaseStore):
                 "avatar_url": avatar_url,
                 "short_description": short_description,
                 "long_description": long_description,
+                "is_public": True,
             },
             desc="create_group",
         )
@@ -1084,6 +1093,24 @@ class GroupServerStore(SQLBaseStore):
                 "attestation_json": json.dumps(attestation)
             },
             desc="update_remote_attestion",
+        )
+
+    def remove_attestation_renewal(self, group_id, user_id):
+        """Remove an attestation that we thought we should renew, but actually
+        shouldn't. Ideally this would never get called as we would never
+        incorrectly try and do attestations for local users on local groups.
+
+        Args:
+            group_id (str)
+            user_id (str)
+        """
+        return self._simple_delete(
+            table="group_attestations_renewals",
+            keyvalues={
+                "group_id": group_id,
+                "user_id": user_id,
+            },
+            desc="remove_attestation_renewal",
         )
 
     @defer.inlineCallbacks
