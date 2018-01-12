@@ -28,27 +28,27 @@ DEFAULT_LOG_CONFIG = Template("""
 version: 1
 
 formatters:
-  precise:
-   format: '%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(request)s\
-- %(message)s'
+    precise:
+        format: '%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - \
+%(request)s - %(message)s'
 
 filters:
-  context:
-    (): synapse.util.logcontext.LoggingContextFilter
-    request: ""
+    context:
+        (): synapse.util.logcontext.LoggingContextFilter
+        request: ""
 
 handlers:
-  file:
-    class: logging.handlers.RotatingFileHandler
-    formatter: precise
-    filename: ${log_file}
-    maxBytes: 104857600
-    backupCount: 10
-    filters: [context]
-  console:
-    class: logging.StreamHandler
-    formatter: precise
-    filters: [context]
+    file:
+        class: logging.handlers.RotatingFileHandler
+        formatter: precise
+        filename: ${log_file}
+        maxBytes: 104857600
+        backupCount: 10
+        filters: [context]
+    console:
+        class: logging.StreamHandler
+        formatter: precise
+        filters: [context]
 
 loggers:
     synapse:
@@ -74,7 +74,6 @@ class LoggingConfig(Config):
         self.log_file = self.abspath(config.get("log_file"))
 
     def default_config(self, config_dir_path, server_name, **kwargs):
-        log_file = self.abspath("homeserver.log")
         log_config = self.abspath(
             os.path.join(config_dir_path, server_name + ".log.config")
         )
@@ -117,9 +116,10 @@ class LoggingConfig(Config):
     def generate_files(self, config):
         log_config = config.get("log_config")
         if log_config and not os.path.exists(log_config):
+            log_file = self.abspath("homeserver.log")
             with open(log_config, "wb") as log_config_file:
                 log_config_file.write(
-                    DEFAULT_LOG_CONFIG.substitute(log_file=config["log_file"])
+                    DEFAULT_LOG_CONFIG.substitute(log_file=log_file)
                 )
 
 
