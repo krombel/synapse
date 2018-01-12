@@ -632,6 +632,11 @@ largest boxes pause for thought.)
 
 Troubleshooting
 ---------------
+
+You can use the federation tester to check if your homeserver is all set:
+``https://matrix.org/federationtester/api/report?server_name=<your_server_name>``
+If any of the attributes under "checks" is false, federation won't work.
+
 The typical failure mode with federation is that when you try to join a room,
 it is rejected with "401: Unauthorized". Generally this means that other
 servers in the room couldn't access yours. (Joining a room over federation is a
@@ -832,7 +837,9 @@ spidering 'internal' URLs on your network.  At the very least we recommend that
 your loopback and RFC1918 IP addresses are blacklisted.
 
 This also requires the optional lxml and netaddr python dependencies to be
-installed.
+installed.  This in turn requires the libxml2 library to be available - on
+Debian/Ubuntu this means ``apt-get install libxml2-dev``, or equivalent for
+your OS.
 
 
 Password reset

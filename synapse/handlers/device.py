@@ -34,6 +34,7 @@ class DeviceHandler(BaseHandler):
 
         self.hs = hs
         self.state = hs.get_state_handler()
+        self._auth_handler = hs.get_auth_handler()
         self.federation_sender = hs.get_federation_sender()
         self.federation = hs.get_replication_layer()
 
@@ -159,9 +160,8 @@ class DeviceHandler(BaseHandler):
             else:
                 raise
 
-        yield self.store.user_delete_access_tokens(
+        yield self._auth_handler.delete_access_tokens_for_user(
             user_id, device_id=device_id,
-            delete_refresh_tokens=True,
         )
 
         yield self.store.delete_e2e_keys_by_device(
@@ -171,12 +171,30 @@ class DeviceHandler(BaseHandler):
         yield self.notify_device_update(user_id, [device_id])
 
     @defer.inlineCallbacks
+    def delete_all_devices_for_user(self, user_id, except_device_id=None):
+        """Delete all of the user's devices
+
+        Args:
+            user_id (str):
+            except_device_id (str|None): optional device id which should not
+                be deleted
+
+        Returns:
+            defer.Deferred:
+        """
+        device_map = yield self.store.get_devices_by_user(user_id)
+        device_ids = device_map.keys()
+        if except_device_id is not None:
+            device_ids = [d for d in device_ids if d != except_device_id]
+        yield self.delete_devices(user_id, device_ids)
+
+    @defer.inlineCallbacks
     def delete_devices(self, user_id, device_ids):
         """ Delete several devices
 
         Args:
             user_id (str):
-            device_ids (str): The list of device IDs to delete
+            device_ids (List[str]): The list of device IDs to delete
 
         Returns:
             defer.Deferred:
@@ -194,9 +212,8 @@ class DeviceHandler(BaseHandler):
         # Delete access tokens and e2e keys for each device. Not optimised as it is not
         # considered as part of a critical path.
         for device_id in device_ids:
-            yield self.store.user_delete_access_tokens(
+            yield self._auth_handler.delete_access_tokens_for_user(
                 user_id, device_id=device_id,
-                delete_refresh_tokens=True,
             )
             yield self.store.delete_e2e_keys_by_device(
                 user_id=user_id, device_id=device_id

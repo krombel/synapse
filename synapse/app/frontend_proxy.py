@@ -50,8 +50,7 @@ logger = logging.getLogger("synapse.app.frontend_proxy")
 
 
 class KeyUploadServlet(RestServlet):
-    PATTERNS = client_v2_patterns("/keys/upload(/(?P<device_id>[^/]+))?$",
-                                  releases=())
+    PATTERNS = client_v2_patterns("/keys/upload(/(?P<device_id>[^/]+))?$")
 
     def __init__(self, hs):
         """
@@ -89,9 +88,16 @@ class KeyUploadServlet(RestServlet):
 
         if body:
             # They're actually trying to upload something, proxy to main synapse.
+            # Pass through the auth headers, if any, in case the access token
+            # is there.
+            auth_headers = request.requestHeaders.getRawHeaders("Authorization", [])
+            headers = {
+                "Authorization": auth_headers,
+            }
             result = yield self.http_client.post_json_get_json(
                 self.main_uri + request.uri,
                 body,
+                headers=headers,
             )
 
             defer.returnValue((200, result))
@@ -151,17 +157,16 @@ class FrontendProxyServer(HomeServer):
 
         root_resource = create_resource_tree(resources, Resource())
 
-        for address in bind_addresses:
-            reactor.listenTCP(
-                port,
-                SynapseSite(
-                    "synapse.access.http.%s" % (site_tag,),
-                    site_tag,
-                    listener_config,
-                    root_resource,
-                ),
-                interface=address
+        _base.listen_tcp(
+            bind_addresses,
+            port,
+            SynapseSite(
+                "synapse.access.http.%s" % (site_tag,),
+                site_tag,
+                listener_config,
+                root_resource,
             )
+        )
 
         logger.info("Synapse client reader now listening on port %d", port)
 
@@ -170,18 +175,15 @@ class FrontendProxyServer(HomeServer):
             if listener["type"] == "http":
                 self._listen_http(listener)
             elif listener["type"] == "manhole":
-                bind_addresses = listener["bind_addresses"]
-
-                for address in bind_addresses:
-                    reactor.listenTCP(
-                        listener["port"],
-                        manhole(
-                            username="matrix",
-                            password="rabbithole",
-                            globals={"hs": self},
-                        ),
-                        interface=address
+                _base.listen_tcp(
+                    listener["bind_addresses"],
+                    listener["port"],
+                    manhole(
+                        username="matrix",
+                        password="rabbithole",
+                        globals={"hs": self},
                     )
+                )
             else:
                 logger.warn("Unrecognized listener type: %s", listener["type"])
 

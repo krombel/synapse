@@ -428,12 +428,11 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
 
 
 class SynapseWebsocketFactory(WebSocketServerFactory):
-    def __init__(self, hs, config, compress):
+    def __init__(self, hs, compress=False, proxied=False):
         super(SynapseWebsocketFactory, self).__init__()
         self.protocol = SynapseWebsocketProtocol
         self.hs = hs
-        self.config = config
-        self.proxied = config.get("x_forwarded", False)
+        self.proxied = proxied
 
         if compress:
             self.setProtocolOptions(perMessageCompressionAccept=self.accept_compress)
