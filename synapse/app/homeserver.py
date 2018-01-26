@@ -63,9 +63,6 @@ from twisted.web.resource import EncodingResourceWrapper, Resource
 from twisted.web.server import GzipEncoderFactory
 from twisted.web.static import File
 
-from autobahn.twisted.resource import WebSocketResource
-from synapse.websocket.websocket import SynapseWebsocketFactory
-
 logger = logging.getLogger("synapse.app.homeserver")
 
 
