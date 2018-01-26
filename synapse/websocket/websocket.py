@@ -9,6 +9,7 @@ from synapse.api.filtering import FilterCollection, DEFAULT_FILTER_COLLECTION, \
     set_timeline_upper_limit
 from synapse.handlers.sync import SyncConfig
 from synapse.rest.client.v2_alpha.sync import SyncRestServlet
+from synapse.rest.client.transactions import HttpTransactionCache
 from synapse.types import StreamToken, UserID, create_requester
 import logging
 import json
@@ -320,8 +321,14 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         defer.returnValue(bytes('{"id":"' + msg["id"] + '","result":{}}'))
 
     @defer.inlineCallbacks
-    def _handle_send(self, msg):
+    def _handle_send(self, msg, use_cached=True):
         logger.debug("Execute _handle_send")
+        if use_cached:
+            result = yield self.factory.txns.fetch_or_execute(
+                msg["id"], self._handle_send, msg, use_cached=False,
+            )
+            defer.returnValue(result)
+
         params = msg["params"]
 
         yield self.factory.presence_handler.bump_presence_active_time(self.requester.user)
@@ -345,8 +352,13 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         }))
 
     @defer.inlineCallbacks
-    def _handle_state(self, msg):
+    def _handle_state(self, msg, use_cached=True):
         logger.debug("Execute _handle_state")
+        if use_cached:
+            result = yield self.factory.txns.fetch_or_execute(
+                msg["id"], self._handle_state, msg, use_cached=False,
+            )
+            defer.returnValue(result)
 
         yield self.factory.presence_handler.bump_presence_active_time(self.requester.user)
 
@@ -432,6 +444,7 @@ class SynapseWebsocketFactory(WebSocketServerFactory):
         self.presence_handler = hs.get_presence_handler()
         self.receipts_handler = hs.get_receipts_handler()
         self.read_marker_handler = hs.get_read_marker_handler()
+        self.txns = HttpTransactionCache(hs.get_clock())
         self.typing_handler = hs.get_typing_handler()
         self.clients = []
 

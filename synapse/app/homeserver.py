@@ -18,6 +18,8 @@ import logging
 import os
 import sys
 
+from autobahn.twisted.resource import WebSocketResource
+
 import synapse
 import synapse.config.logger
 from synapse import events
@@ -53,6 +55,8 @@ from synapse.util.manhole import manhole
 from synapse.util.module_loader import load_module
 from synapse.util.rlimit import change_resource_limit
 from synapse.util.versionstring import get_version_string
+from synapse.websocket.websocket import SynapseWebsocketFactory
+
 from twisted.application import service
 from twisted.internet import defer, reactor
 from twisted.web.resource import EncodingResourceWrapper, Resource
@@ -227,6 +231,14 @@ class SynapseHomeServer(HomeServer):
 
         if name == "webclient":
             resources[WEB_CLIENT_PREFIX] = build_resource_for_web_client(self)
+
+        if name == "websocket":
+            ws_factory = SynapseWebsocketFactory(self, compress, proxied)
+            ws_factory.startFactory()
+            websocket_resource = WebSocketResource(ws_factory)
+            resources.update({
+                "/_matrix/client/ws/r0": websocket_resource,
+            })
 
         if name == "metrics" and self.get_config().enable_metrics:
             resources[METRICS_PREFIX] = MetricsResource(self)
