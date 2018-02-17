@@ -1,4 +1,4 @@
-/* Copyright 2016 OpenMarket Ltd
+/* Copyright 2018 New Vector Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,16 @@
  * limitations under the License.
  */
 
--- We no longer do this given we back it out again in schema 47
+-- Temporary staging area for push actions that have been calculated for an
+-- event, but the event hasn't yet been persisted.
+-- When the event is persisted the rows are moved over to the
+-- event_push_actions table.
+CREATE TABLE event_push_actions_staging (
+    event_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    actions TEXT NOT NULL,
+    notif SMALLINT NOT NULL,
+    highlight SMALLINT NOT NULL
+);
 
--- INSERT into background_updates (update_name, progress_json)
---     VALUES ('event_search_postgres_gist', '{}');
+CREATE INDEX event_push_actions_staging_id ON event_push_actions_staging(event_id);
