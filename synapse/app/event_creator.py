@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# Copyright 2016 OpenMarket Ltd
+# Copyright 2018 New Vector Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,26 +18,25 @@ import sys
 
 import synapse
 from synapse import events
-from synapse.api.urls import (
-    CONTENT_REPO_PREFIX, LEGACY_MEDIA_PREFIX, MEDIA_PREFIX
-)
 from synapse.app import _base
 from synapse.config._base import ConfigError
 from synapse.config.homeserver import HomeServerConfig
 from synapse.config.logger import setup_logging
 from synapse.crypto import context_factory
+from synapse.http.server import JsonResource
 from synapse.http.site import SynapseSite
 from synapse.metrics.resource import METRICS_PREFIX, MetricsResource
 from synapse.replication.slave.storage._base import BaseSlavedStore
 from synapse.replication.slave.storage.appservice import SlavedApplicationServiceStore
 from synapse.replication.slave.storage.client_ips import SlavedClientIpStore
+from synapse.replication.slave.storage.devices import SlavedDeviceStore
+from synapse.replication.slave.storage.events import SlavedEventStore
 from synapse.replication.slave.storage.registration import SlavedRegistrationStore
-from synapse.replication.slave.storage.transactions import TransactionStore
+from synapse.replication.slave.storage.room import RoomStore
 from synapse.replication.tcp.client import ReplicationClientHandler
-from synapse.rest.media.v0.content_repository import ContentRepoResource
+from synapse.rest.client.v1.room import RoomSendEventRestServlet
 from synapse.server import HomeServer
 from synapse.storage.engines import create_engine
-from synapse.storage.media_repository import MediaRepositoryStore
 from synapse.util.httpresourcetree import create_resource_tree
 from synapse.util.logcontext import LoggingContext
 from synapse.util.manhole import manhole
@@ -45,24 +44,25 @@ from synapse.util.versionstring import get_version_string
 from twisted.internet import reactor
 from twisted.web.resource import Resource
 
-logger = logging.getLogger("synapse.app.media_repository")
+logger = logging.getLogger("synapse.app.event_creator")
 
 
-class MediaRepositorySlavedStore(
-    SlavedApplicationServiceStore,
-    SlavedRegistrationStore,
+class EventCreatorSlavedStore(
+    SlavedDeviceStore,
     SlavedClientIpStore,
-    TransactionStore,
+    SlavedApplicationServiceStore,
+    SlavedEventStore,
+    SlavedRegistrationStore,
+    RoomStore,
     BaseSlavedStore,
-    MediaRepositoryStore,
 ):
     pass
 
 
-class MediaRepositoryServer(HomeServer):
+class EventCreatorServer(HomeServer):
     def setup(self):
         logger.info("Setting up.")
-        self.datastore = MediaRepositorySlavedStore(self.get_db_conn(), self)
+        self.datastore = EventCreatorSlavedStore(self.get_db_conn(), self)
         logger.info("Finished setting up.")
 
     def _listen_http(self, listener_config):
@@ -74,14 +74,14 @@ class MediaRepositoryServer(HomeServer):
             for name in res["names"]:
                 if name == "metrics":
                     resources[METRICS_PREFIX] = MetricsResource(self)
-                elif name == "media":
-                    media_repo = self.get_media_repository_resource()
+                elif name == "client":
+                    resource = JsonResource(self, canonical_json=False)
+                    RoomSendEventRestServlet(self).register(resource)
                     resources.update({
-                        MEDIA_PREFIX: media_repo,
-                        LEGACY_MEDIA_PREFIX: media_repo,
-                        CONTENT_REPO_PREFIX: ContentRepoResource(
-                            self, self.config.uploads_path
-                        ),
+                        "/_matrix/client/r0": resource,
+                        "/_matrix/client/unstable": resource,
+                        "/_matrix/client/v2_alpha": resource,
+                        "/_matrix/client/api/v1": resource,
                     })
 
         root_resource = create_resource_tree(resources, Resource())
@@ -97,7 +97,7 @@ class MediaRepositoryServer(HomeServer):
             )
         )
 
-        logger.info("Synapse media repository now listening on port %d", port)
+        logger.info("Synapse event creator now listening on port %d", port)
 
     def start_listening(self, listeners):
         for listener in listeners:
@@ -125,20 +125,15 @@ class MediaRepositoryServer(HomeServer):
 def start(config_options):
     try:
         config = HomeServerConfig.load_config(
-            "Synapse media repository", config_options
+            "Synapse event creator", config_options
         )
     except ConfigError as e:
         sys.stderr.write("\n" + e.message + "\n")
         sys.exit(1)
 
-    assert config.worker_app == "synapse.app.media_repository"
+    assert config.worker_app == "synapse.app.event_creator"
 
-    if config.enable_media_repo:
-        _base.quit_with_error(
-            "enable_media_repo must be disabled in the main synapse process\n"
-            "before the media repo can be run in a separate worker.\n"
-            "Please add ``enable_media_repo: false`` to the main config\n"
-        )
+    assert config.worker_replication_http_port is not None
 
     setup_logging(config, use_worker_options=True)
 
@@ -148,7 +143,7 @@ def start(config_options):
 
     tls_server_context_factory = context_factory.ServerContextFactory(config)
 
-    ss = MediaRepositoryServer(
+    ss = EventCreatorServer(
         config.server_name,
         db_config=config.database_config,
         tls_server_context_factory=tls_server_context_factory,
@@ -167,7 +162,7 @@ def start(config_options):
 
     reactor.callWhenRunning(start)
 
-    _base.start_worker_reactor("synapse-media-repository", config)
+    _base.start_worker_reactor("synapse-event-creator", config)
 
 
 if __name__ == '__main__':
