@@ -382,7 +382,8 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
                 content=params["content"],
             )
         else:
-            event = yield self.factory.event_creation_handler.create_and_send_nonmember_event(
+            event_creation_handler = self.factory.event_creation_handler
+            event = yield event_creation_handler.create_and_send_nonmember_event(
                 self.requester,
                 event_dict,
                 txn_id=msg["id"],
