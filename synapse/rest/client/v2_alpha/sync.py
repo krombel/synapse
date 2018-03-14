@@ -16,9 +16,10 @@
 import itertools
 import logging
 
-from canonicaljson import json
+from canonicaljson import encode_canonical_json, json
 
 from twisted.internet import defer
+from twisted.web import server
 
 from synapse.api.constants import PresenceState
 from synapse.api.errors import SynapseError
@@ -86,6 +87,8 @@ class SyncRestServlet(RestServlet):
         self.filtering = hs.get_filtering()
         self.presence_handler = hs.get_presence_handler()
         self._server_notices_sender = hs.get_server_notices_sender()
+        self.reactor = hs.get_reactor()
+        self.eventsource_subscribers = set()
 
     @defer.inlineCallbacks
     def on_GET(self, request):
@@ -158,9 +161,18 @@ class SyncRestServlet(RestServlet):
         if affect_presence:
             yield self.presence_handler.set_state(user, {"presence": set_presence}, True)
 
+        content_type = request.requestHeaders.getRawHeaders("Content-Type")
+        if (content_type == "text/event-stream"):
+            logger.error("DEBUG: content type is text/event-stream")
+            self.addSubscriber(
+                request, sync_config, since_token, full_state, affect_presence,
+            )
+            defer.returnValue(server.NOT_DONE_YET)
+
         context = yield self.presence_handler.user_syncing(
             user.to_string(), affect_presence=affect_presence,
         )
+
         with context:
             sync_result = yield self.sync_handler.wait_for_sync_for_user(
                 sync_config, since_token=since_token, timeout=timeout,
@@ -173,6 +185,55 @@ class SyncRestServlet(RestServlet):
         )
 
         defer.returnValue((200, response_content))
+
+    def addSubscriber(
+            self, request, sync_config, since_token=None, full_state=None,
+            affect_presence=False,
+    ):
+        logger.msg("Adding subscriber..")
+        request.notifyFinish().addBoth(self.removeSubscriber)
+        request.write("")
+        self.eventsource_subscribers.add(request)
+        self.reactor.run(
+            self.runSyncLoop, request, sync_config, since_token, full_state,
+            affect_presence,
+        )
+
+    def runSyncLoop(
+            self, request, sync_config, since_token=None, full_state=None,
+            affect_presence=False,
+    ):
+        context = yield self.presence_handler.user_syncing(
+            sync_config.user.to_string(), affect_presence=affect_presence,
+        )
+        with context:
+            sync_result = yield self.sync_handler.wait_for_sync_for_user(
+                sync_config, since_token=since_token, timeout=60000,
+                full_state=full_state
+            )
+
+        time_now = self.clock.time_msec()
+        response_content = self.encode_response(
+            time_now, sync_result, None, filter
+        )
+
+        batch_token = response_content.get("batch_token", None)
+        response_content.pop("batch_token")
+
+        request.write("id: %s\nevent: sync\n".format(batch_token))
+        request.write("data: %s\n\n".format(encode_canonical_json(response_content)))
+
+        if request in self.eventsource_subscribers:
+            # only trigger a new run when the subscriber is there
+            self.reactor.run(
+                self.runSyncLoop, request, sync_config, since_token,
+                full_state, affect_presence
+            )
+
+    def removeSubscriber(self, subscriber):
+        if subscriber in self.eventsource_subscribers:
+            logger.msg("Removing subscriber..")
+            self.eventsource_subscribers.remove(subscriber)
 
     @staticmethod
     def encode_response(time_now, sync_result, access_token_id, filter):
