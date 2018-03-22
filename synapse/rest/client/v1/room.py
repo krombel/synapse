@@ -30,7 +30,7 @@ from synapse.http.servlet import (
 
 import logging
 import urllib
-import ujson as json
+import simplejson as json
 
 logger = logging.getLogger(__name__)
 
@@ -599,7 +599,7 @@ class RoomMembershipRestServlet(ClientV1RestServlet):
     def register(self, http_server):
         # /rooms/$roomid/[invite|join|leave]
         PATTERNS = ("/rooms/(?P<room_id>[^/]*)/"
-                    "(?P<membership_action>join|invite|leave|ban|unban|kick|forget)")
+                    "(?P<membership_action>join|invite|leave|ban|unban|kick)")
         register_txn_path(self, PATTERNS, http_server)
 
     @defer.inlineCallbacks

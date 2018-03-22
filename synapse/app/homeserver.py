@@ -186,14 +186,6 @@ class SynapseHomeServer(HomeServer):
                 "/_matrix/client/versions": client_resource,
             })
 
-        if name == "websocket":
-            ws_factory = SynapseWebsocketFactory(self, compress, proxied)
-            ws_factory.startFactory()
-            websocket_resource = WebSocketResource(ws_factory)
-            resources.update({
-                "/_matrix/client/ws/r0": websocket_resource,
-            })
-
         if name == "federation":
             resources.update({
                 FEDERATION_PREFIX: TransportLayerServer(self),
@@ -369,7 +361,7 @@ def setup(config_options):
         hs.get_state_handler().start_caching()
         hs.get_datastore().start_profiling()
         hs.get_datastore().start_doing_background_updates()
-        hs.get_replication_layer().start_get_pdu_cache()
+        hs.get_federation_client().start_get_pdu_cache()
 
         register_memory_metrics(hs)
 
