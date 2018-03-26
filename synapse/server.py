@@ -32,8 +32,10 @@ from synapse.appservice.scheduler import ApplicationServiceScheduler
 from synapse.crypto.keyring import Keyring
 from synapse.events.builder import EventBuilderFactory
 from synapse.events.spamcheck import SpamChecker
-from synapse.federation import initialize_http_replication
+from synapse.federation.federation_client import FederationClient
+from synapse.federation.federation_server import FederationServer
 from synapse.federation.send_queue import FederationRemoteSendQueue
+from synapse.federation.federation_server import FederationHandlerRegistry
 from synapse.federation.transport.client import TransportLayerClient
 from synapse.federation.transaction_queue import TransactionQueue
 from synapse.handlers import Handlers
@@ -45,7 +47,8 @@ from synapse.handlers.device import DeviceHandler
 from synapse.handlers.e2e_keys import E2eKeysHandler
 from synapse.handlers.presence import PresenceHandler
 from synapse.handlers.room_list import RoomListHandler
-from synapse.handlers.room_member import RoomMemberHandler
+from synapse.handlers.room_member import RoomMemberMasterHandler
+from synapse.handlers.room_member_worker import RoomMemberWorkerHandler
 from synapse.handlers.set_password import SetPasswordHandler
 from synapse.handlers.sync import SyncHandler
 from synapse.handlers.typing import TypingHandler
@@ -99,7 +102,8 @@ class HomeServer(object):
     DEPENDENCIES = [
         'http_client',
         'db_pool',
-        'replication_layer',
+        'federation_client',
+        'federation_server',
         'handlers',
         'v1auth',
         'auth',
@@ -147,6 +151,7 @@ class HomeServer(object):
         'groups_attestation_renewer',
         'spam_checker',
         'room_member_handler',
+        'federation_registry',
     ]
 
     def __init__(self, hostname, **kwargs):
@@ -195,8 +200,11 @@ class HomeServer(object):
     def get_ratelimiter(self):
         return self.ratelimiter
 
-    def build_replication_layer(self):
-        return initialize_http_replication(self)
+    def build_federation_client(self):
+        return FederationClient(self)
+
+    def build_federation_server(self):
+        return FederationServer(self)
 
     def build_handlers(self):
         return Handlers(self)
@@ -385,7 +393,12 @@ class HomeServer(object):
         return SpamChecker(self)
 
     def build_room_member_handler(self):
-        return RoomMemberHandler(self)
+        if self.config.worker_app:
+            return RoomMemberWorkerHandler(self)
+        return RoomMemberMasterHandler(self)
+
+    def build_federation_registry(self):
+        return FederationHandlerRegistry()
 
     def remove_pusher(self, app_id, push_key, user_id):
         return self.get_pusherpool().remove_pusher(app_id, push_key, user_id)

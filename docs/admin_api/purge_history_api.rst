@@ -16,9 +16,11 @@ including an ``access_token`` of a server admin.
 
 By default, events sent by local users are not deleted, as they may represent
 the only copies of this content in existence. (Events sent by remote users are
-deleted, and room state data before the cutoff is always removed).
+deleted.)
 
-To delete local events as well, set ``delete_local_events`` in the body:
+Room state data (such as joins, leaves, topic) is always preserved.
+
+To delete local message events as well, set ``delete_local_events`` in the body:
 
 .. code:: json
 
@@ -32,3 +34,30 @@ specified by including an event_id in the URI, or by setting a
 id is given, that event (and others at the same graph depth) will be retained.
 If ``purge_up_to_ts`` is given, it should be a timestamp since the unix epoch,
 in milliseconds.
+
+The API starts the purge running, and returns immediately with a JSON body with
+a purge id:
+
+.. code:: json
+
+    {
+        "purge_id": "<opaque id>"
+    }
+
+Purge status query
+------------------
+
+It is possible to poll for updates on recent purges with a second API;
+
+``GET /_matrix/client/r0/admin/purge_history_status/<purge_id>``
+
+(again, with a suitable ``access_token``). This API returns a JSON body like
+the following:
+
+.. code:: json
+
+    {
+        "status": "active"
+    }
+
+The status will be one of ``active``, ``complete``, or ``failed``.
