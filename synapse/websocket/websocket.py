@@ -8,14 +8,13 @@ from synapse.api.errors import AuthError, Codes, SynapseError
 from synapse.api.filtering import FilterCollection, DEFAULT_FILTER_COLLECTION, \
     set_timeline_upper_limit
 from synapse.handlers.sync import SyncConfig
-import synapse.metrics
+from synapse.metrics import LaterGauge
 from synapse.rest.client.v2_alpha.sync import SyncRestServlet
 from synapse.rest.client.transactions import HttpTransactionCache
 from synapse.types import StreamToken, UserID, create_requester
 import logging
 import json
 logger = logging.getLogger("synapse.websocket")
-metrics = synapse.metrics.get_metrics_for("synapse.websocket")
 
 # Close Reason Codes:
 # 3001 - No Access Token
@@ -447,9 +446,8 @@ class SynapseWebsocketFactory(WebSocketServerFactory):
         self.typing_handler = hs.get_typing_handler()
         self.clients = []
 
-        metrics.register_callback(
-            "connection_count",
-            self.getConnectionCount
+        LaterGauge("synapse_websocket_connection_count",
+                   "", [], self.getConnectionCount
         )
 
     @staticmethod
