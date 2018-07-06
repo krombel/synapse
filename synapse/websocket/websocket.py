@@ -446,8 +446,9 @@ class SynapseWebsocketFactory(WebSocketServerFactory):
         self.typing_handler = hs.get_typing_handler()
         self.clients = []
 
-        LaterGauge("synapse_websocket_connection_count",
-                   "", [], self.getConnectionCount
+        LaterGauge(
+            "synapse_websocket_connection_count",
+            "", [], self.getConnectionCount
         )
 
     @staticmethod
