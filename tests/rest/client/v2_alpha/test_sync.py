@@ -73,11 +73,7 @@ class FilterTestCase(unittest.TestCase):
             set(
                 [
                     "next_batch",
-                    "rooms",
-                    "presence",
-                    "account_data",
-                    "to_device",
-                    "device_lists",
+                    "device_one_time_keys_count",
                 ]
             ).issubset(set(channel.json_body.keys()))
         )
