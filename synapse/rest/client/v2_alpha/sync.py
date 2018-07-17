@@ -167,10 +167,14 @@ class SyncRestServlet(RestServlet):
         if sync_result.to_device:
             response["to_device"] = {"events": sync_result.to_device}
         if sync_result.device_lists:
-            response["device_lists"] = {
-                "changed": list(sync_result.device_lists.changed),
-                "left": list(sync_result.device_lists.left),
-            }
+            device_lists = {}
+            if sync_result.device_lists.changed:
+                device_lists["changed"] = list(sync_result.device_lists.changed)
+            if sync_result.device_lists.left:
+                device_lists["left"] = list(sync_result.device_lists.left)
+
+            if device_lists:
+                response["device_lists"] = device_lists
 
         if sync_result.presence:
             response["presence"] = SyncRestServlet.encode_presence(
@@ -180,11 +184,11 @@ class SyncRestServlet(RestServlet):
         rooms = {}
         if sync_result.joined:
             rooms["join"] = SyncRestServlet.encode_joined(
-                sync_result.joined, time_now, access_token_id, filter.event_fields
+                sync_result.joined, time_now, access_token_id, filter.event_fields,
             )
         if sync_result.invited:
             rooms["invite"] = SyncRestServlet.encode_invited(
-                sync_result.invited, time_now, access_token_id
+                sync_result.invited, time_now, access_token_id,
             )
         if sync_result.archived:
             rooms["leave"] = SyncRestServlet.encode_archived(
@@ -194,17 +198,17 @@ class SyncRestServlet(RestServlet):
         if rooms:
             response["rooms"] = rooms
 
-        groups = {}
         if sync_result.groups:
+            groups = {}
             if sync_result.groups.join:
                 groups["join"] = sync_result.groups.join
-            if sync_result.groups.invite:
+            if sync_result.groups.join:
                 groups["invite"] = sync_result.groups.invite
-            if sync_result.groups.leave:
+            if sync_result.groups.join:
                 groups["leave"] = sync_result.groups.leave
 
-        if groups:
-            response["groups"] = groups
+            if groups:
+                response["groups"] = groups
 
         return response
 
