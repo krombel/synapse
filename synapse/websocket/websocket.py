@@ -32,6 +32,7 @@ SYNC_TIMEOUT = 90000
 
 class SynapseWebsocketProtocol(WebSocketServerProtocol):
     def __init__(self):
+        super(SynapseWebsocketProtocol, self).__init__()
         """
         This is run per each connection.
         """
@@ -433,7 +434,7 @@ class SynapseWebsocketFactory(WebSocketServerFactory):
         if compress:
             self.setProtocolOptions(perMessageCompressionAccept=self.accept_compress)
 
-        self.txns = HttpTransactionCache(hs.get_clock())
+        self.txns = HttpTransactionCache(hs)
 
         LaterGauge(
             "synapse_websocket_connection_count",
