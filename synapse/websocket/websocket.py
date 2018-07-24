@@ -36,6 +36,12 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         """
         This is run per each connection.
         """
+        self.since = None
+        self.currentSync = None
+
+    @defer.inlineCallbacks
+    def onConnect(self, request):
+        # these are here as factory is not available in __init__
         self.hs = self.factory.hs
         self.auth = self.hs.get_auth()
         self.clock = self.hs.get_clock()
@@ -45,13 +51,6 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         self.reactor = self.hs.get_reactor()
         self.sync_handler = self.hs.get_sync_handler()
 
-        self.filter = None
-        self.since = None
-        self.full_state = False
-        self.currentSync = None
-
-    @defer.inlineCallbacks
-    def onConnect(self, request):
         logger.info("connecting: {0}".format(request.peer))
 
         if self.factory.proxied:
@@ -88,11 +87,11 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             return
         logger.info("authenticated {0} ({1}) okay".format(user['user'], ip_addr))
 
-        self.full_state = request.params.get("full_state", [self.full_state])[0]
+        self.full_state = request.params.get("full_state", [False])[0]
 
-        since = request.params.get("since", None)
+        since = request.params.get("since", [None])[0]
         if since is not None:
-            since = since[0].decode('utf-8')
+            since = since.decode('utf-8')
             self.since = StreamToken.from_string(since)
 
         self.filter_unfiltered = request.params.get("filter", [None])[0]
@@ -192,6 +191,9 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
                     "error": ex.__str__(),
                 }
             }))
+
+    def _genTxnKey(self, msg_id):
+        return self.requester.user + "/" + self.requester.access_token_id + "/" + msg_id
 
     def onClose(self, wasClean, code, reason):
         logger.info("WebSocket connection closed: {0} {1}".format(code, reason))
@@ -324,7 +326,10 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         logger.debug("Execute _handle_send")
         if use_cached:
             result = yield self.factory.txns.fetch_or_execute(
-                msg["id"], self._handle_send, msg, use_cached=False,
+                self._genTxnKey(msg["id"]),
+                self._handle_send,
+                msg,
+                use_cached=False,
             )
             defer.returnValue(result)
 
@@ -356,7 +361,10 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         logger.debug("Execute _handle_state")
         if use_cached:
             result = yield self.factory.txns.fetch_or_execute(
-                msg["id"], self._handle_state, msg, use_cached=False,
+                self._genTxnKey(msg["id"]),
+                self._handle_state,
+                msg,
+                use_cached=False,
             )
             defer.returnValue(result)
 
@@ -434,6 +442,7 @@ class SynapseWebsocketFactory(WebSocketServerFactory):
         if compress:
             self.setProtocolOptions(perMessageCompressionAccept=self.accept_compress)
 
+        # this should be shared between all connections
         self.txns = HttpTransactionCache(hs)
 
         LaterGauge(

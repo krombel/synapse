@@ -75,11 +75,11 @@ CONDITIONAL_REQUIREMENTS = {
     "psutil": {
         "psutil>=2.0.0": ["psutil>=2.0.0"],
     },
-    "websocket": {
-        "autobahn": ["autobahn"],
-    },
     "affinity": {
         "affinity": ["affinity"],
+    },
+    "websocket": {
+        "autobahn": ["autobahn"],
     },
 }
 

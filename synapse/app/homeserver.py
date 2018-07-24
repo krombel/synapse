@@ -242,6 +242,12 @@ class SynapseHomeServer(HomeServer):
         if name == "webclient":
             resources[WEB_CLIENT_PREFIX] = build_resource_for_web_client(self)
 
+        if name == "metrics" and self.get_config().enable_metrics:
+            resources[METRICS_PREFIX] = MetricsResource(RegistryProxy)
+
+        if name == "replication":
+            resources[REPLICATION_PREFIX] = ReplicationRestResource(self)
+
         if name == "websocket":
             ws_factory = SynapseWebsocketFactory(self, compress, proxied)
             ws_factory.startFactory()
@@ -249,12 +255,6 @@ class SynapseHomeServer(HomeServer):
             resources.update({
                 "/_matrix/client/ws/r0": websocket_resource,
             })
-
-        if name == "metrics" and self.get_config().enable_metrics:
-            resources[METRICS_PREFIX] = MetricsResource(RegistryProxy)
-
-        if name == "replication":
-            resources[REPLICATION_PREFIX] = ReplicationRestResource(self)
 
         return resources
 
