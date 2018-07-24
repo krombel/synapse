@@ -95,7 +95,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             self.since = StreamToken.from_string(since)
 
         self.filter_unfiltered = request.params.get("filter", [None])[0]
-        self.filter = self.filtering.parse_filter(
+        self.filter = yield self.filtering.parse_filter(
             self.filter_unfiltered,
             user['user'].localpart,
         )
@@ -193,7 +193,8 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             }))
 
     def _genTxnKey(self, msg_id):
-        return self.requester.user + "/" + self.requester.access_token_id + "/" + msg_id
+        return self.requester.user.to_string() + "/" + \
+            str(self.requester.access_token_id) + "/" + msg_id
 
     def onClose(self, wasClean, code, reason):
         logger.info("WebSocket connection closed: {0} {1}".format(code, reason))
@@ -229,16 +230,21 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
 
         @defer.inlineCallbacks
         def sync_with_presence_context():
+            logger.debug("start with sync_with_presence_context()")
             context = yield self.presence_handler.user_syncing(
                 self.requester.user.to_string(), affect_presence=affect_presence,
             )
             with context:
-                sync_result = yield self.sync_handler.wait_for_sync_for_user(
-                    sync_config,
-                    since_token=self.since,
-                    timeout=0 if initial else SYNC_TIMEOUT,
-                    full_state=self.full_state if initial else False
-                )
+                try:
+                    sync_result = yield self.sync_handler.wait_for_sync_for_user(
+                        sync_config,
+                        since_token=self.since,
+                        timeout=0 if initial else SYNC_TIMEOUT,
+                        full_state=self.full_state if initial else False
+                    )
+                except Exception as ex:
+                    logger.warn("Something went wrong when getting sync response: %s", ex)
+
                 defer.returnValue(sync_result)
 
         sync = defer.maybeDeferred(sync_with_presence_context)
