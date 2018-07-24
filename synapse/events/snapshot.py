@@ -82,6 +82,11 @@ class EventContext(object):
         "_fetching_state_deferred",
     ]
 
+    def __init__(self):
+        self.prev_state_events = []
+        self.rejected = False
+        self.app_service = None
+
     @staticmethod
     def with_state(state_group, current_state_ids, prev_state_ids,
                    prev_group=None, delta_ids=None):
@@ -103,14 +108,10 @@ class EventContext(object):
         context.prev_group = prev_group
         context.delta_ids = delta_ids
 
-        context.prev_state_events = []
-
-        context.rejected = False
-        context.app_service = None
-
         return context
 
-    def serialize(self, event):
+    @defer.inlineCallbacks
+    def serialize(self, event, store):
         """Converts self to a type that can be serialized as JSON, and then
         deserialized by `deserialize`
 
@@ -126,11 +127,12 @@ class EventContext(object):
         # the prev_state_ids, so if we're a state event we include the event
         # id that we replaced in the state.
         if event.is_state():
-            prev_state_id = self.prev_state_ids.get((event.type, event.state_key))
+            prev_state_ids = yield self.get_prev_state_ids(store)
+            prev_state_id = prev_state_ids.get((event.type, event.state_key))
         else:
             prev_state_id = None
 
-        return {
+        defer.returnValue({
             "prev_state_id": prev_state_id,
             "event_type": event.type,
             "event_state_key": event.state_key if event.is_state() else None,
@@ -140,10 +142,9 @@ class EventContext(object):
             "delta_ids": _encode_state_dict(self.delta_ids),
             "prev_state_events": self.prev_state_events,
             "app_service_id": self.app_service.id if self.app_service else None
-        }
+        })
 
     @staticmethod
-    @defer.inlineCallbacks
     def deserialize(store, input):
         """Converts a dict that was produced by `serialize` back into a
         EventContext.
@@ -163,6 +164,10 @@ class EventContext(object):
         context._event_type = input["event_type"]
         context._event_state_key = input["event_state_key"]
 
+        context._current_state_ids = None
+        context._prev_state_ids = None
+        context._fetching_state_deferred = None
+
         context.state_group = input["state_group"]
         context.prev_group = input["prev_group"]
         context.delta_ids = _decode_state_dict(input["delta_ids"])
@@ -174,7 +179,7 @@ class EventContext(object):
         if app_service_id:
             context.app_service = store.get_app_service_by_id(app_service_id)
 
-        defer.returnValue(context)
+        return context
 
     @defer.inlineCallbacks
     def get_current_state_ids(self, store):
@@ -211,6 +216,17 @@ class EventContext(object):
         yield make_deferred_yieldable(self._fetching_state_deferred)
 
         defer.returnValue(self._prev_state_ids)
+
+    def get_cached_current_state_ids(self):
+        """Gets the current state IDs if we have them already cached.
+
+        Returns:
+            dict[(str, str), str]|None: Returns None if we haven't cached the
+            state or if state_group is None, which happens when the associated
+            event is an outlier.
+        """
+
+        return self._current_state_ids
 
     @defer.inlineCallbacks
     def _fill_out_state(self, store):
