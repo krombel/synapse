@@ -20,6 +20,8 @@ import sys
 
 from six import iteritems
 
+from autobahn.twisted.resource import WebSocketResource
+
 from twisted.application import service
 from twisted.internet import defer, reactor
 from twisted.web.resource import EncodingResourceWrapper, NoResource
@@ -69,10 +71,7 @@ from synapse.util.manhole import manhole
 from synapse.util.module_loader import load_module
 from synapse.util.rlimit import change_resource_limit
 from synapse.util.versionstring import get_version_string
-
-from autobahn.twisted.resource import WebSocketResource
 from synapse.websocket.websocket import SynapseWebsocketFactory
-
 
 logger = logging.getLogger("synapse.app.homeserver")
 
@@ -126,6 +125,7 @@ class SynapseHomeServer(HomeServer):
             for name in res["names"]:
                 resources.update(self._configure_named_resource(
                     name, res.get("compress", False),
+                    listener_config.get("x_forwarded", False),
                 ))
 
         additional_resources = listener_config.get("additional_resources", {})
@@ -172,7 +172,7 @@ class SynapseHomeServer(HomeServer):
             )
         logger.info("Synapse now listening on port %d", port)
 
-    def _configure_named_resource(self, name, compress=False):
+    def _configure_named_resource(self, name, compress=False, proxied=False):
         """Build a resource map for a named resource
 
         Args:
@@ -249,7 +249,7 @@ class SynapseHomeServer(HomeServer):
             resources[REPLICATION_PREFIX] = ReplicationRestResource(self)
 
         if name == "websocket":
-            ws_factory = SynapseWebsocketFactory(self, listener_config, compress)
+            ws_factory = SynapseWebsocketFactory(self, compress, proxied)
             ws_factory.startFactory()
             websocket_resource = WebSocketResource(ws_factory)
             resources.update({
