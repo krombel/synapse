@@ -66,3 +66,6 @@ Pierre Jaury <pierre at jaury.eu>
 
 Matthias Kesler <krombel at krombel dot.de>
  * Add WebSocket support
+
+Serban Constantin <serban.constantin at gmail dot com>
+ * Small bug fix
