@@ -372,6 +372,7 @@ class SyncRestServlet(RestServlet):
             if ephemeral_events:
                 result["ephemeral"] = {"events": ephemeral_events}
             result["unread_notifications"] = room.unread_notifications
+            result["summary"] = room.summary
 
         return result
 
