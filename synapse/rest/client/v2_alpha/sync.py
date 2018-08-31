@@ -32,6 +32,7 @@ from synapse.events.utils import (
 from synapse.handlers.presence import format_user_presence_state
 from synapse.handlers.sync import SyncConfig
 from synapse.http.servlet import RestServlet, parse_boolean, parse_integer, parse_string
+from synapse.metrics import LaterGauge
 from synapse.types import StreamToken
 
 from ._base import client_v2_patterns, set_timeline_upper_limit
@@ -89,6 +90,11 @@ class SyncRestServlet(RestServlet):
         self._server_notices_sender = hs.get_server_notices_sender()
         self.reactor = hs.get_reactor()
         self.eventsource_subscribers = set()
+
+        LaterGauge(
+            "synapse_eventsource_connection_count",
+            "", [], lambda: len(self.eventsource_subscribers)
+        )
 
     @defer.inlineCallbacks
     def on_GET(self, request):
