@@ -20,6 +20,7 @@ from canonicaljson import encode_canonical_json, json
 
 from twisted.internet import defer
 from twisted.web import server
+from time import sleep
 
 from synapse.api.constants import PresenceState
 from synapse.api.errors import SynapseError
@@ -167,13 +168,15 @@ class SyncRestServlet(RestServlet):
         if affect_presence:
             yield self.presence_handler.set_state(user, {"presence": set_presence}, True)
 
-        content_type = request.requestHeaders.getRawHeaders("Content-Type")
-        if (content_type == "text/event-stream"):
-            logger.error("DEBUG: content type is text/event-stream")
+        accept = request.requestHeaders.getRawHeaders("Accept")
+        if (accept[0] == "text/event-stream"):
+            logger.error("DEBUG: connecting via EventStream")
             self.addSubscriber(
                 request, sync_config, since_token, full_state, affect_presence,
             )
-            defer.returnValue(server.NOT_DONE_YET)
+            while request in self.eventsource_subscribers:
+                sleep(10)
+            defer.returnValue(None)
 
         context = yield self.presence_handler.user_syncing(
             user.to_string(), affect_presence=affect_presence,
@@ -196,19 +199,21 @@ class SyncRestServlet(RestServlet):
             self, request, sync_config, since_token=None, full_state=None,
             affect_presence=False,
     ):
-        logger.msg("Adding subscriber..")
+        logger.debug("Adding subscriber..")
         request.notifyFinish().addBoth(self.removeSubscriber)
         request.write("")
         self.eventsource_subscribers.add(request)
-        self.reactor.run(
-            self.runSyncLoop, request, sync_config, since_token, full_state,
-            affect_presence,
+        self.reactor.callWhenRunning(
+            lambda: self.runSyncLoop(
+                request, sync_config, since_token, full_state, affect_presence,
+            )
         )
 
     def runSyncLoop(
             self, request, sync_config, since_token=None, full_state=None,
             affect_presence=False,
     ):
+        logger.debug("runSyncLoop")
         context = yield self.presence_handler.user_syncing(
             sync_config.user.to_string(), affect_presence=affect_presence,
         )
@@ -231,9 +236,10 @@ class SyncRestServlet(RestServlet):
 
         if request in self.eventsource_subscribers:
             # only trigger a new run when the subscriber is there
-            self.reactor.run(
-                self.runSyncLoop, request, sync_config, since_token,
-                full_state, affect_presence
+            self.reactor.callWhenRunning(
+                lambda: self.runSyncLoop(
+                    request, sync_config, since_token, full_state, affect_presence,
+                )
             )
 
     def removeSubscriber(self, subscriber):
