@@ -19,8 +19,6 @@ import logging
 from canonicaljson import encode_canonical_json, json
 
 from twisted.internet import defer
-from twisted.web import server
-from time import sleep
 
 from synapse.api.constants import PresenceState
 from synapse.api.errors import SynapseError
@@ -169,13 +167,11 @@ class SyncRestServlet(RestServlet):
             yield self.presence_handler.set_state(user, {"presence": set_presence}, True)
 
         accept = request.requestHeaders.getRawHeaders("Accept")
-        if (accept[0] == "text/event-stream"):
+        if accept and accept[0] == "text/event-stream":
             logger.error("DEBUG: connecting via EventStream")
-            self.addSubscriber(
+            yield self.addSubscriber(
                 request, sync_config, since_token, full_state, affect_presence,
             )
-            while request in self.eventsource_subscribers:
-                sleep(10)
             defer.returnValue(None)
 
         context = yield self.presence_handler.user_syncing(
@@ -200,9 +196,12 @@ class SyncRestServlet(RestServlet):
             affect_presence=False,
     ):
         logger.debug("Adding subscriber..")
+        d = defer.Deferred()
+        self.eventsource_subscribers.add((request, d))
+
         request.notifyFinish().addBoth(self.removeSubscriber)
         request.write("")
-        self.eventsource_subscribers.add(request)
+
         self.reactor.callWhenRunning(
             lambda: self.runSyncLoop(
                 request, sync_config, since_token, full_state, affect_presence,
@@ -231,10 +230,14 @@ class SyncRestServlet(RestServlet):
         batch_token = response_content.get("batch_token", None)
         response_content.pop("batch_token")
 
-        request.write("id: %s\nevent: sync\n".format(batch_token))
-        request.write("data: %s\n\n".format(encode_canonical_json(response_content)))
+        try:
+            request.write("id: %s\nevent: sync\n".format(batch_token))
+            request.write("data: %s\n\n".format(encode_canonical_json(response_content)))
+        except Exception as e:
+            logger.error("Writing to request failed: %s", e)
+            self.removeSubscriber(request)
 
-        if request in self.eventsource_subscribers:
+        if self.hasSubscriber(request):
             # only trigger a new run when the subscriber is there
             self.reactor.callWhenRunning(
                 lambda: self.runSyncLoop(
@@ -242,10 +245,21 @@ class SyncRestServlet(RestServlet):
                 )
             )
 
+    def hasSubscriber(self, subscriber):
+        for request, deferred in self.eventsource_subscribers:
+            if request == subscriber:
+                logger.debug("hasSubscriber: Found subscriber in subscribers list")
+                return True
+        return False
+
     def removeSubscriber(self, subscriber):
         if subscriber in self.eventsource_subscribers:
             logger.msg("Removing subscriber..")
-            self.eventsource_subscribers.remove(subscriber)
+            for request, deferred in self.eventsource_subscribers:
+                if request == subscriber:
+                    logger.debug("Fround subscriber in subscribers list")
+                    self.eventsource_subscribers.remove((request, deferred))
+                    deferred.callback()
 
     @staticmethod
     def encode_response(time_now, sync_result, access_token_id, filter):
