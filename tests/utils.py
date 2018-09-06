@@ -26,11 +26,12 @@ from twisted.internet import defer, reactor
 
 from synapse.api.constants import EventTypes
 from synapse.api.errors import CodeMessageException, cs_error
+from synapse.config.server import ServerConfig
 from synapse.federation.transport import server
 from synapse.http.server import HttpServer
 from synapse.server import HomeServer
-from synapse.storage import DataStore, PostgresEngine
-from synapse.storage.engines import create_engine
+from synapse.storage import DataStore
+from synapse.storage.engines import PostgresEngine, create_engine
 from synapse.storage.prepare_database import (
     _get_or_create_schema_state,
     _setup_new_database,
@@ -41,6 +42,7 @@ from synapse.util.ratelimitutils import FederationRateLimiter
 
 # set this to True to run the tests against postgres instead of sqlite.
 USE_POSTGRES_FOR_TESTS = os.environ.get("SYNAPSE_POSTGRES", False)
+LEAVE_DB = os.environ.get("SYNAPSE_LEAVE_DB", False)
 POSTGRES_USER = os.environ.get("SYNAPSE_POSTGRES_USER", "postgres")
 POSTGRES_BASE_DB = "_synapse_unit_tests_base_%s" % (os.getpid(),)
 
@@ -158,6 +160,11 @@ def setup_test_homeserver(
         # background, which upsets the test runner.
         config.update_user_directory = False
 
+        def is_threepid_reserved(threepid):
+            return ServerConfig.is_threepid_reserved(config, threepid)
+
+        config.is_threepid_reserved.side_effect = is_threepid_reserved
+
     config.use_frozen_dicts = True
     config.ldap_enabled = False
 
@@ -238,8 +245,9 @@ def setup_test_homeserver(
                 cur.close()
                 db_conn.close()
 
-            # Register the cleanup hook
-            cleanup_func(cleanup)
+            if not LEAVE_DB:
+                # Register the cleanup hook
+                cleanup_func(cleanup)
 
         hs.setup()
     else:
@@ -313,7 +321,10 @@ class MockHttpResource(HttpServer):
 
     @patch('twisted.web.http.Request')
     @defer.inlineCallbacks
-    def trigger(self, http_method, path, content, mock_request, federation_auth=False):
+    def trigger(
+        self, http_method, path, content, mock_request,
+        federation_auth_origin=None,
+    ):
         """ Fire an HTTP event.
 
         Args:
@@ -322,6 +333,7 @@ class MockHttpResource(HttpServer):
             content : The HTTP body
             mock_request : Mocked request to pass to the event so it can get
                            content.
+            federation_auth_origin (bytes|None): domain to authenticate as, for federation
         Returns:
             A tuple of (code, response)
         Raises:
@@ -342,8 +354,10 @@ class MockHttpResource(HttpServer):
         mock_request.getClientIP.return_value = "-"
 
         headers = {}
-        if federation_auth:
-            headers[b"Authorization"] = [b"X-Matrix origin=test,key=,sig="]
+        if federation_auth_origin is not None:
+            headers[b"Authorization"] = [
+                b"X-Matrix origin=%s,key=,sig=" % (federation_auth_origin, )
+            ]
         mock_request.requestHeaders.getRawHeaders = mock_getRawHeaders(headers)
 
         # return the right path if the event requires it
