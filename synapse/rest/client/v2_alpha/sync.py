@@ -22,6 +22,7 @@ from synapse.api.constants import PresenceState
 from synapse.api.errors import SynapseError
 from synapse.events.utils import (
     format_event_for_client_v2_without_room_id,
+    format_event_raw,
     serialize_event,
 )
 from synapse.handlers.presence import format_user_presence_state
@@ -157,10 +158,71 @@ class SyncRestServlet(RestServlet):
 
     @staticmethod
     def encode_response(time_now, sync_result, access_token_id, filter):
+        if filter.event_format == 'client':
+            event_formatter = format_event_for_client_v2_without_room_id
+        elif filter.event_format == 'federation':
+            event_formatter = format_event_raw
+        else:
+            raise Exception("Unknown event format %s" % (filter.event_format, ))
+
         response = {
             "device_one_time_keys_count": sync_result.device_one_time_keys_count,
             "next_batch": sync_result.next_batch.to_string(),
         }
+        if sync_result.account_data:
+            response["account_data"] = {"events": sync_result.account_data}
+        if sync_result.to_device:
+            response["to_device"] = {"events": sync_result.to_device}
+        if sync_result.device_lists:
+            device_lists = {}
+            if sync_result.device_lists.changed:
+                device_lists["changed"] = list(sync_result.device_lists.changed)
+            if sync_result.device_lists.left:
+                device_lists["left"] = list(sync_result.device_lists.left)
+
+            if device_lists:
+                response["device_lists"] = device_lists
+
+        if sync_result.presence:
+            response["presence"] = SyncRestServlet.encode_presence(
+                sync_result.presence, time_now
+            )
+
+        rooms = {}
+        if sync_result.joined:
+            rooms["join"] = SyncRestServlet.encode_joined(
+                sync_result.joined, time_now, access_token_id,
+                filter.event_fields,
+                event_formatter,
+            )
+        if sync_result.invited:
+            rooms["invite"] = SyncRestServlet.encode_invited(
+                sync_result.invited, time_now, access_token_id,
+                event_formatter,
+            )
+        if sync_result.archived:
+            rooms["leave"] = SyncRestServlet.encode_archived(
+                sync_result.archived, time_now, access_token_id,
+                filter.event_fields,
+                event_formatter,
+            )
+
+        if rooms:
+            response["rooms"] = rooms
+
+        if sync_result.groups:
+            groups = {}
+            if sync_result.groups.join:
+                groups["join"] = sync_result.groups.join
+            if sync_result.groups.join:
+                groups["invite"] = sync_result.groups.invite
+            if sync_result.groups.join:
+                groups["leave"] = sync_result.groups.leave
+
+            if groups:
+                response["groups"] = groups
+
+        return response
 
         if sync_result.account_data:
             response["account_data"] = {"events": sync_result.account_data}
@@ -228,7 +290,7 @@ class SyncRestServlet(RestServlet):
         }
 
     @staticmethod
-    def encode_joined(rooms, time_now, token_id, event_fields):
+    def encode_joined(rooms, time_now, token_id, event_fields, event_formatter):
         """
         Encode the joined rooms in a sync result
 
@@ -240,7 +302,9 @@ class SyncRestServlet(RestServlet):
             token_id(int): ID of the user's auth token - used for namespacing
                 of transaction IDs
             event_fields(list<str>): List of event fields to include. If empty,
-            all fields will be returned.
+                all fields will be returned.
+            event_formatter (func[dict]): function to convert from federation format
+                to client format
         Returns:
             dict[str, dict[str, object]]: the joined rooms list, in our
                 response format
@@ -248,13 +312,14 @@ class SyncRestServlet(RestServlet):
         joined = {}
         for room in rooms:
             joined[room.room_id] = SyncRestServlet.encode_room(
-                room, time_now, token_id, only_fields=event_fields
+                room, time_now, token_id, joined=True, only_fields=event_fields,
+                event_formatter=event_formatter,
             )
 
         return joined
 
     @staticmethod
-    def encode_invited(rooms, time_now, token_id):
+    def encode_invited(rooms, time_now, token_id, event_formatter):
         """
         Encode the invited rooms in a sync result
 
@@ -264,7 +329,9 @@ class SyncRestServlet(RestServlet):
             time_now(int): current time - used as a baseline for age
                 calculations
             token_id(int): ID of the user's auth token - used for namespacing
-            of transaction IDs
+                of transaction IDs
+            event_formatter (func[dict]): function to convert from federation format
+                to client format
 
         Returns:
             dict[str, dict[str, object]]: the invited rooms list, in our
@@ -274,7 +341,7 @@ class SyncRestServlet(RestServlet):
         for room in rooms:
             invite = serialize_event(
                 room.invite, time_now, token_id=token_id,
-                event_format=format_event_for_client_v2_without_room_id,
+                event_format=event_formatter,
                 is_invite=True,
             )
             unsigned = dict(invite.get("unsigned", {}))
@@ -288,7 +355,7 @@ class SyncRestServlet(RestServlet):
         return invited
 
     @staticmethod
-    def encode_archived(rooms, time_now, token_id, event_fields):
+    def encode_archived(rooms, time_now, token_id, event_fields, event_formatter):
         """
         Encode the archived rooms in a sync result
 
@@ -300,7 +367,9 @@ class SyncRestServlet(RestServlet):
             token_id(int): ID of the user's auth token - used for namespacing
                 of transaction IDs
             event_fields(list<str>): List of event fields to include. If empty,
-            all fields will be returned.
+                all fields will be returned.
+            event_formatter (func[dict]): function to convert from federation format
+                to client format
         Returns:
             dict[str, dict[str, object]]: The invited rooms list, in our
                 response format
@@ -308,13 +377,18 @@ class SyncRestServlet(RestServlet):
         joined = {}
         for room in rooms:
             joined[room.room_id] = SyncRestServlet.encode_room(
-                room, time_now, token_id, joined=False, only_fields=event_fields
+                room, time_now, token_id, joined=False,
+                only_fields=event_fields,
+                event_formatter=event_formatter,
             )
 
         return joined
 
     @staticmethod
-    def encode_room(room, time_now, token_id, joined=True, only_fields=None):
+    def encode_room(
+            room, time_now, token_id, joined,
+            only_fields, event_formatter,
+    ):
         """
         Args:
             room (JoinedSyncResult|ArchivedSyncResult): sync result for a
@@ -326,14 +400,15 @@ class SyncRestServlet(RestServlet):
             joined (bool): True if the user is joined to this room - will mean
                 we handle ephemeral events
             only_fields(list<str>): Optional. The list of event fields to include.
+            event_formatter (func[dict]): function to convert from federation format
+                to client format
         Returns:
             dict[str, object]: the room, encoded in our response format
         """
         def serialize(event):
-            # TODO(mjark): Respect formatting requirements in the filter.
             return serialize_event(
                 event, time_now, token_id=token_id,
-                event_format=format_event_for_client_v2_without_room_id,
+                event_format=event_formatter,
                 only_event_fields=only_fields,
             )
 
