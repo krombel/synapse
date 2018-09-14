@@ -39,10 +39,7 @@ class FilterTestCase(unittest.HomeserverTestCase):
         self.assertEqual(channel.code, 200)
         self.assertTrue(
             set(
-                [
-                    "next_batch",
-                    "device_one_time_keys_count",
-                ]
+                ["next_batch", "device_one_time_keys_count"]
             ).issubset(set(channel.json_body.keys()))
         )
 
@@ -58,9 +55,6 @@ class FilterTestCase(unittest.HomeserverTestCase):
         self.assertEqual(channel.code, 200)
         self.assertTrue(
             set(
-                [
-                    "next_batch",
-                    "device_one_time_keys_count",
-                ]
+                ["next_batch", "device_one_time_keys_count"]
             ).issubset(set(channel.json_body.keys()))
         )
