@@ -24,9 +24,9 @@ logger = logging.getLogger("synapse.websocket")
 # 3002 - Unknown Access Token
 # 3003 - Generic failure trying to auth.
 
-ERR_NO_AT = unicode("No access_token provided.")
-ERR_UNKNOWN_AT = unicode("Unknown access_token.")
-ERR_UNKNOWN_FAIL = unicode("Unknown failure trying to auth.")
+ERR_NO_AT = "No access_token provided."
+ERR_UNKNOWN_AT = "Unknown access_token."
+ERR_UNKNOWN_FAIL = "Unknown failure trying to auth."
 SYNC_TIMEOUT = 90000
 
 
@@ -65,7 +65,6 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         if access_token is None:
             self.sendClose(3001, ERR_NO_AT)
             return
-        access_token = access_token.decode('utf-8')
 
         user = None
         try:
@@ -91,7 +90,6 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
 
         since = request.params.get("since", [None])[0]
         if since is not None:
-            since = since.decode('utf-8')
             self.since = StreamToken.from_string(since)
 
         self.filter_unfiltered = request.params.get("filter", [None])[0]
@@ -141,7 +139,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
             return  # Ignore binary for now
         else:
             try:
-                logger.debug("Text message received: {0}".format(payload.decode('utf8')))
+                logger.debug("Text message received: {0}".format(payload))
             except Exception:
                 logger.debug("Text message received (unparseable)")
 
@@ -169,12 +167,12 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
                     "errcode": "M_BAD_JSON",
                     "error": "Unknown method",
                 }
-            })
+            }).encode('utf8')
         )
 
         try:
             result = yield method(msg)
-            self.sendMessage(result)
+            self.sendMessage(result.encode("utf8"))
         except SynapseError as ex:
             self.sendMessage(json.dumps({
                 "id": msg["id"],
@@ -182,15 +180,15 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
                     "errcode": ex.errcode,
                     "error": ex.msg,
                 }
-            }))
+            }).encode('utf8'))
         except Exception as ex:
             self.sendMessage(json.dumps({
                 "id": msg["id"],
                 "error": {
                     "errcode": "M_UNKNOWN",
-                    "error": ex.__str__(),
+                    "error": str(ex),
                 }
-            }))
+            }).encode('utf8'))
 
     def _genTxnKey(self, msg_id):
         return self.requester.user.to_string() + "/" + \
@@ -242,10 +240,9 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
                         timeout=0 if initial else SYNC_TIMEOUT,
                         full_state=self.full_state if initial else False
                     )
+                    defer.returnValue(sync_result)
                 except Exception as ex:
                     logger.warn("Something went wrong when getting sync response: %s", ex)
-
-                defer.returnValue(sync_result)
 
         sync = defer.maybeDeferred(sync_with_presence_context)
         sync.addCallback(self._sync_callback)
@@ -264,7 +261,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
                 result,
                 self.requester.access_token_id,
                 self.filter
-            )), False)
+            )).encode("utf8"), False)
 
             # start new call of _sync - use reactor to avoid endless recursion
             self.reactor.callLater(0, self._sync)
@@ -274,7 +271,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
     @defer.inlineCallbacks
     def _handle_ping(self, msg):
         yield logger.debug("Execute _handle_ping")
-        defer.returnValue(bytes('{"id":"' + msg["id"] + '","result":{}}'))
+        defer.returnValue('{"id":"' + msg["id"] + '","result":{}}')
 
     @defer.inlineCallbacks
     def _handle_presence(self, msg):
@@ -286,8 +283,8 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         try:
             state["presence"] = params.pop("presence")
 
-            if "status_msg" in params:
-                state["status_msg"] = params.pop("status_msg")
+            if b"status_msg" in params:
+                state[b"status_msg"] = params.pop("status_msg")
                 if not isinstance(state["status_msg"], basestring):
                     raise SynapseError(400, "status_msg must be a string.")
             if params:
@@ -299,7 +296,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
 
         yield self.presence_handler.set_state(self.requester.user, state)
         self.presence = state["presence"]
-        defer.returnValue(bytes('{"id":"' + msg["id"] + '","result":{}}'))
+        defer.returnValue('{"id":"' + msg["id"] + '","result":{}}')
 
     @defer.inlineCallbacks
     def _handle_read_markers(self, msg):
@@ -325,7 +322,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
                 event_id=read_marker_event_id
             )
 
-        defer.returnValue(bytes('{"id":"' + msg["id"] + '","result":{}}'))
+        defer.returnValue('{"id":"' + msg["id"] + '","result":{}}')
 
     @defer.inlineCallbacks
     def _handle_send(self, msg, use_cached=True):
@@ -435,7 +432,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
                 room_id=params["room_id"],
             )
 
-        defer.returnValue(bytes('{"id":"' + msg["id"] + '","result":{}}'))
+        defer.returnValue('{"id":"' + msg["id"] + '","result":{}}')
 
 
 class SynapseWebsocketFactory(WebSocketServerFactory):
