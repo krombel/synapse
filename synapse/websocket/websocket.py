@@ -1,6 +1,8 @@
 import json
 import logging
 
+from six import string_types
+
 from autobahn.twisted.websocket import WebSocketServerFactory, WebSocketServerProtocol
 from autobahn.websocket.compress import (
     PerMessageDeflateOffer,
@@ -146,7 +148,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
         msg = {}
         try:
             msg = json.loads(payload.decode('utf8'))
-        except Exception as ex:
+        except Exception:
             logger.warn("Received payload is not json")
             return
 
@@ -285,7 +287,7 @@ class SynapseWebsocketProtocol(WebSocketServerProtocol):
 
             if b"status_msg" in params:
                 state[b"status_msg"] = params.pop("status_msg")
-                if not isinstance(state["status_msg"], basestring):
+                if not isinstance(state["status_msg"], string_types):
                     raise SynapseError(400, "status_msg must be a string.")
             if params:
                 raise SynapseError(400, "Too many keys", errcode=Codes.BAD_JSON)
