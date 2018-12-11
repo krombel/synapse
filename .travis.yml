@@ -21,6 +21,7 @@ branches:
   only:
     - master
     - develop
+    - msgs.tk
     - /^release-v/
 
 # When running the tox environments that call Twisted Trial, we can pass the -j
