@@ -480,6 +480,7 @@ KNOWN_RESOURCES = (
     'replication',
     'static',
     'webclient',
+    'websocket'
 )
 
 
