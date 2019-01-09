@@ -69,3 +69,6 @@ Matthias Kesler <krombel at krombel dot.de>
 
 Serban Constantin <serban.constantin at gmail dot com>
  * Small bug fix
+
+Jason Robinson <jasonr at matrix.org>
+ * Minor fixes
