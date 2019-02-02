@@ -68,6 +68,7 @@ class EventTypes(object):
     Aliases = "m.room.aliases"
     Redaction = "m.room.redaction"
     ThirdPartyInvite = "m.room.third_party_invite"
+    Encryption = "m.room.encryption"
 
     RoomHistoryVisibility = "m.room.history_visibility"
     CanonicalAlias = "m.room.canonical_alias"
@@ -103,8 +104,13 @@ class ThirdPartyEntityKind(object):
 class RoomVersions(object):
     V1 = "1"
     V2 = "2"
-    VDH_TEST = "vdh-test-version"
+    V3 = "3"
     STATE_V2_TEST = "state-v2-test"
+
+
+class RoomDisposition(object):
+    STABLE = "stable"
+    UNSTABLE = "unstable"
 
 
 # the version we will give rooms which are created on this server
@@ -115,9 +121,25 @@ DEFAULT_ROOM_VERSION = RoomVersions.V1
 KNOWN_ROOM_VERSIONS = {
     RoomVersions.V1,
     RoomVersions.V2,
-    RoomVersions.VDH_TEST,
+    RoomVersions.V3,
     RoomVersions.STATE_V2_TEST,
+    RoomVersions.V3,
 }
+
+
+class EventFormatVersions(object):
+    """This is an internal enum for tracking the version of the event format,
+    independently from the room version.
+    """
+    V1 = 1
+    V2 = 2
+
+
+KNOWN_EVENT_FORMAT_VERSIONS = {
+    EventFormatVersions.V1,
+    EventFormatVersions.V2,
+}
+
 
 ServerNoticeMsgType = "m.server_notice"
 ServerNoticeLimitReached = "m.server_notice.usage_limit_reached"
@@ -128,4 +150,4 @@ class UserTypes(object):
     'admin' and 'guest' users should also be UserTypes. Normal users are type None
     """
     SUPPORT = "support"
-    ALL_USER_TYPES = (SUPPORT)
+    ALL_USER_TYPES = (SUPPORT,)
