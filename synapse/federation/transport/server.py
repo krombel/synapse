@@ -21,8 +21,8 @@ import re
 from twisted.internet import defer
 
 import synapse
-from synapse.api.constants import RoomVersions
 from synapse.api.errors import Codes, FederationDeniedError, SynapseError
+from synapse.api.room_versions import RoomVersions
 from synapse.api.urls import FEDERATION_V1_PREFIX, FEDERATION_V2_PREFIX
 from synapse.http.endpoint import parse_and_validate_server_name
 from synapse.http.server import JsonResource
@@ -513,7 +513,7 @@ class FederationV1InviteServlet(BaseFederationServlet):
         # state resolution algorithm, and we don't use that for processing
         # invites
         content = yield self.handler.on_invite_request(
-            origin, content, room_version=RoomVersions.V1,
+            origin, content, room_version=RoomVersions.V1.identifier,
         )
 
         # V1 federation API is defined to return a content of `[200, {...}]`
@@ -716,8 +716,17 @@ class PublicRoomList(BaseFederationServlet):
 
     PATH = "/publicRooms"
 
+    def __init__(self, handler, authenticator, ratelimiter, server_name, deny_access):
+        super(PublicRoomList, self).__init__(
+            handler, authenticator, ratelimiter, server_name,
+        )
+        self.deny_access = deny_access
+
     @defer.inlineCallbacks
     def on_GET(self, origin, content, query):
+        if self.deny_access:
+            raise FederationDeniedError(origin)
+
         limit = parse_integer_from_args(query, "limit", 0)
         since_token = parse_string_from_args(query, "since", None)
         include_all_networks = parse_boolean_from_args(
@@ -1417,6 +1426,7 @@ def register_servlets(hs, resource, authenticator, ratelimiter, servlet_groups=N
                 authenticator=authenticator,
                 ratelimiter=ratelimiter,
                 server_name=hs.hostname,
+                deny_access=hs.config.restrict_public_rooms_to_local_users,
             ).register(resource)
 
     if "group_server" in servlet_groups:

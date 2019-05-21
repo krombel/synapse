@@ -1,4 +1,4 @@
-/* Copyright 2014-2016 OpenMarket Ltd
+/* Copyright 2019 New Vector Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -12,8 +12,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-CREATE TABLE IF NOT EXISTS profiles(
+
+-- Tracks which identity server a user bound their threepid via.
+CREATE TABLE user_threepid_id_server (
     user_id TEXT NOT NULL,
-    displayname TEXT,
-    avatar_url TEXT
+    medium TEXT NOT NULL,
+    address TEXT NOT NULL,
+    id_server TEXT NOT NULL
 );
+
+CREATE UNIQUE INDEX user_threepid_id_server_idx ON user_threepid_id_server(
+    user_id, medium, address, id_server
+);
+
+INSERT INTO background_updates (update_name, progress_json) VALUES
+  ('user_threepids_grandfather', '{}');

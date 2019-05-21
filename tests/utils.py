@@ -27,8 +27,9 @@ from six.moves.urllib import parse as urlparse
 
 from twisted.internet import defer, reactor
 
-from synapse.api.constants import EventTypes, RoomVersions
+from synapse.api.constants import EventTypes
 from synapse.api.errors import CodeMessageException, cs_error
+from synapse.api.room_versions import RoomVersions
 from synapse.config.homeserver import HomeServerConfig
 from synapse.federation.transport import server as federation_server
 from synapse.http.server import HttpServer
@@ -67,7 +68,9 @@ def setupdb():
 
         # connect to postgres to create the base database.
         db_conn = db_engine.module.connect(
-            user=POSTGRES_USER, host=POSTGRES_HOST, password=POSTGRES_PASSWORD,
+            user=POSTGRES_USER,
+            host=POSTGRES_HOST,
+            password=POSTGRES_PASSWORD,
             dbname=POSTGRES_DBNAME_FOR_INITIAL_CREATE,
         )
         db_conn.autocommit = True
@@ -93,7 +96,9 @@ def setupdb():
 
         def _cleanup():
             db_conn = db_engine.module.connect(
-                user=POSTGRES_USER, host=POSTGRES_HOST, password=POSTGRES_PASSWORD,
+                user=POSTGRES_USER,
+                host=POSTGRES_HOST,
+                password=POSTGRES_PASSWORD,
                 dbname=POSTGRES_DBNAME_FOR_INITIAL_CREATE,
             )
             db_conn.autocommit = True
@@ -113,7 +118,6 @@ def default_config(name):
         "server_name": name,
         "media_store_path": "media",
         "uploads_path": "uploads",
-
         # the test signing key is just an arbitrary ed25519 key to keep the config
         # parser happy
         "signing_key": "ed25519 a_lPym qvioDNmfExFBRPgdTU+wtFYKq4JfwFRv7sYVgWvmgJg",
@@ -671,7 +675,7 @@ def create_room(hs, room_id, creator_id):
     event_builder_factory = hs.get_event_builder_factory()
     event_creation_handler = hs.get_event_creation_handler()
 
-    builder = event_builder_factory.new(
+    builder = event_builder_factory.for_room_version(
         RoomVersions.V1,
         {
             "type": EventTypes.Create,

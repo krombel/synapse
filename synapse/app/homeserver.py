@@ -63,6 +63,7 @@ from synapse.python_dependencies import check_requirements
 from synapse.replication.http import REPLICATION_PREFIX, ReplicationRestResource
 from synapse.replication.tcp.resource import ReplicationStreamProtocolFactory
 from synapse.rest import ClientRestResource
+from synapse.rest.admin import AdminRestResource
 from synapse.rest.key.v2 import KeyApiV2Resource
 from synapse.rest.media.v0.content_repository import ContentRepoResource
 from synapse.rest.well_known import WellKnownResource
@@ -183,6 +184,7 @@ class SynapseHomeServer(HomeServer):
                 "/_matrix/client/v2_alpha": client_resource,
                 "/_matrix/client/versions": client_resource,
                 "/.well-known/matrix/client": WellKnownResource(self),
+                "/_synapse/admin": AdminRestResource(self),
             })
 
             if self.get_config().saml2_enabled:
@@ -529,6 +531,7 @@ def run(hs):
             uptime = 0
 
         stats["homeserver"] = hs.config.server_name
+        stats["server_context"] = hs.config.server_context
         stats["timestamp"] = now
         stats["uptime_seconds"] = uptime
         version = sys.version_info
@@ -569,7 +572,6 @@ def run(hs):
 
         stats["database_engine"] = hs.get_datastore().database_engine_name
         stats["database_server_version"] = hs.get_datastore().get_server_version()
-
         logger.info("Reporting stats to matrix.org: %s" % (stats,))
         try:
             yield hs.get_simple_http_client().put_json(
