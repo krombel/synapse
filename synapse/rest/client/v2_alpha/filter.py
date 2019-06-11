@@ -22,13 +22,13 @@ from synapse.api.filtering import set_timeline_upper_limit
 from synapse.http.servlet import RestServlet, parse_json_object_from_request
 from synapse.types import UserID
 
-from ._base import client_v2_patterns
+from ._base import client_patterns
 
 logger = logging.getLogger(__name__)
 
 
 class GetFilterRestServlet(RestServlet):
-    PATTERNS = client_v2_patterns("/user/(?P<user_id>[^/]*)/filter/(?P<filter_id>[^/]*)")
+    PATTERNS = client_patterns("/user/(?P<user_id>[^/]*)/filter/(?P<filter_id>[^/]*)")
 
     def __init__(self, hs):
         super(GetFilterRestServlet, self).__init__()
@@ -64,7 +64,7 @@ class GetFilterRestServlet(RestServlet):
 
 
 class CreateFilterRestServlet(RestServlet):
-    PATTERNS = client_v2_patterns("/user/(?P<user_id>[^/]*)/filter")
+    PATTERNS = client_patterns("/user/(?P<user_id>[^/]*)/filter")
 
     def __init__(self, hs):
         super(CreateFilterRestServlet, self).__init__()

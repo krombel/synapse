@@ -30,11 +30,6 @@ from synapse.rest.client.v2_alpha import account_validity, register, sync
 
 from tests import unittest
 
-try:
-    from synapse.push.mailer import load_jinja2_templates
-except ImportError:
-    load_jinja2_templates = None
-
 
 class RegisterRestServletTestCase(unittest.HomeserverTestCase):
 
@@ -307,7 +302,6 @@ class AccountValidityTestCase(unittest.HomeserverTestCase):
 
 class AccountValidityRenewalByEmailTestCase(unittest.HomeserverTestCase):
 
-    skip = "No Jinja installed" if not load_jinja2_templates else None
     servlets = [
         register.register_servlets,
         synapse.rest.admin.register_servlets_for_client_rest_resource,
@@ -436,6 +430,7 @@ class AccountValidityBackgroundJobTestCase(unittest.HomeserverTestCase):
 
     def make_homeserver(self, reactor, clock):
         self.validity_period = 10
+        self.max_delta = self.validity_period * 10. / 100.
 
         config = self.default_config()
 
@@ -453,14 +448,18 @@ class AccountValidityBackgroundJobTestCase(unittest.HomeserverTestCase):
 
     def test_background_job(self):
         """
-        Tests whether the account validity startup background job does the right thing,
-        which is sticking an expiration date to every account that doesn't already have
-        one.
+        Tests the same thing as test_background_job, except that it sets the
+        startup_job_max_delta parameter and checks that the expiration date is within the
+        allowed range.
         """
-        user_id = self.register_user("kermit", "user")
+        user_id = self.register_user("kermit_delta", "user")
+
+        self.hs.config.account_validity.startup_job_max_delta = self.max_delta
 
         now_ms = self.hs.clock.time_msec()
         self.get_success(self.store._set_expiration_date_when_missing())
 
         res = self.get_success(self.store.get_expiration_ts_for_user(user_id))
-        self.assertEqual(res, now_ms + self.validity_period)
+
+        self.assertGreaterEqual(res, now_ms + self.validity_period - self.max_delta)
+        self.assertLessEqual(res, now_ms + self.validity_period)
