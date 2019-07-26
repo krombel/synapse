@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import re
 from email.parser import Parser
@@ -134,9 +135,7 @@ class PasswordResetTestCase(unittest.HomeserverTestCase):
         self.assertEquals(len(self.email_attempts), 1)
 
         # Attempt to reset password without clicking the link
-        self._reset_password(
-            new_password, session_id, client_secret, expected_code=401,
-        )
+        self._reset_password(new_password, session_id, client_secret, expected_code=401)
 
         # Assert we can log in with the old password
         self.login("kermit", old_password)
@@ -171,9 +170,7 @@ class PasswordResetTestCase(unittest.HomeserverTestCase):
         session_id = "weasle"
 
         # Attempt to reset password without even requesting an email
-        self._reset_password(
-            new_password, session_id, client_secret, expected_code=401,
-        )
+        self._reset_password(new_password, session_id, client_secret, expected_code=401)
 
         # Assert we can log in with the old password
         self.login("kermit", old_password)
@@ -239,3 +236,46 @@ class PasswordResetTestCase(unittest.HomeserverTestCase):
         )
         self.render(request)
         self.assertEquals(expected_code, channel.code, channel.result)
+
+
+class DeactivateTestCase(unittest.HomeserverTestCase):
+
+    servlets = [
+        synapse.rest.admin.register_servlets_for_client_rest_resource,
+        login.register_servlets,
+        account.register_servlets,
+    ]
+
+    def make_homeserver(self, reactor, clock):
+        hs = self.setup_test_homeserver()
+        return hs
+
+    def test_deactivate_account(self):
+        user_id = self.register_user("kermit", "test")
+        tok = self.login("kermit", "test")
+
+        request_data = json.dumps(
+            {
+                "auth": {
+                    "type": "m.login.password",
+                    "user": user_id,
+                    "password": "test",
+                },
+                "erase": False,
+            }
+        )
+        request, channel = self.make_request(
+            "POST", "account/deactivate", request_data, access_token=tok
+        )
+        self.render(request)
+        self.assertEqual(request.code, 200)
+
+        store = self.hs.get_datastore()
+
+        # Check that the user has been marked as deactivated.
+        self.assertTrue(self.get_success(store.get_user_deactivated_status(user_id)))
+
+        # Check that this access token has been invalidated.
+        request, channel = self.make_request("GET", "account/whoami")
+        self.render(request)
+        self.assertEqual(request.code, 401)

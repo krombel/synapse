@@ -19,7 +19,6 @@ import signal
 import sys
 import traceback
 
-import psutil
 from daemonize import Daemonize
 
 from twisted.internet import defer, error, reactor
@@ -28,7 +27,7 @@ from twisted.protocols.tls import TLSMemoryBIOFactory
 import synapse
 from synapse.app import check_bind_error
 from synapse.crypto import context_factory
-from synapse.util import PreserveLoggingContext
+from synapse.logging.context import PreserveLoggingContext
 from synapse.util.async_helpers import Linearizer
 from synapse.util.rlimit import change_resource_limit
 from synapse.util.versionstring import get_version_string
@@ -49,7 +48,7 @@ def register_sighup(func):
     _sighup_callbacks.append(func)
 
 
-def start_worker_reactor(appname, config):
+def start_worker_reactor(appname, config, run_command=reactor.run):
     """ Run the reactor in the main process
 
     Daemonizes if necessary, and then configures some resources, before starting
@@ -58,6 +57,7 @@ def start_worker_reactor(appname, config):
     Args:
         appname (str): application name which will be sent to syslog
         config (synapse.config.Config): config object
+        run_command (Callable[]): callable that actually runs the reactor
     """
 
     logger = logging.getLogger(config.worker_app)
@@ -68,21 +68,21 @@ def start_worker_reactor(appname, config):
         gc_thresholds=config.gc_thresholds,
         pid_file=config.worker_pid_file,
         daemonize=config.worker_daemonize,
-        cpu_affinity=config.worker_cpu_affinity,
         print_pidfile=config.print_pidfile,
         logger=logger,
+        run_command=run_command,
     )
 
 
 def start_reactor(
-        appname,
-        soft_file_limit,
-        gc_thresholds,
-        pid_file,
-        daemonize,
-        cpu_affinity,
-        print_pidfile,
-        logger,
+    appname,
+    soft_file_limit,
+    gc_thresholds,
+    pid_file,
+    daemonize,
+    print_pidfile,
+    logger,
+    run_command=reactor.run,
 ):
     """ Run the reactor in the main process
 
@@ -95,64 +95,53 @@ def start_reactor(
         gc_thresholds:
         pid_file (str): name of pid file to write to if daemonize is True
         daemonize (bool): true to run the reactor in a background process
-        cpu_affinity (int|None): cpu affinity mask
         print_pidfile (bool): whether to print the pid file, if daemonize is True
         logger (logging.Logger): logger instance to pass to Daemonize
+        run_command (Callable[]): callable that actually runs the reactor
     """
 
     install_dns_limiter(reactor)
 
     def run():
-        # make sure that we run the reactor with the sentinel log context,
-        # otherwise other PreserveLoggingContext instances will get confused
-        # and complain when they see the logcontext arbitrarily swapping
-        # between the sentinel and `run` logcontexts.
-        with PreserveLoggingContext():
-            logger.info("Running")
-            if cpu_affinity is not None:
-                # Turn the bitmask into bits, reverse it so we go from 0 up
-                mask_to_bits = bin(cpu_affinity)[2:][::-1]
+        logger.info("Running")
+        change_resource_limit(soft_file_limit)
+        if gc_thresholds:
+            gc.set_threshold(*gc_thresholds)
+        run_command()
 
-                cpus = []
-                cpu_num = 0
+    # make sure that we run the reactor with the sentinel log context,
+    # otherwise other PreserveLoggingContext instances will get confused
+    # and complain when they see the logcontext arbitrarily swapping
+    # between the sentinel and `run` logcontexts.
+    #
+    # We also need to drop the logcontext before forking if we're daemonizing,
+    # otherwise the cputime metrics get confused about the per-thread resource usage
+    # appearing to go backwards.
+    with PreserveLoggingContext():
+        if daemonize:
+            if print_pidfile:
+                print(pid_file)
 
-                for i in mask_to_bits:
-                    if i == "1":
-                        cpus.append(cpu_num)
-                    cpu_num += 1
-
-                p = psutil.Process()
-                p.cpu_affinity(cpus)
-
-            change_resource_limit(soft_file_limit)
-            if gc_thresholds:
-                gc.set_threshold(*gc_thresholds)
-            reactor.run()
-
-    if daemonize:
-        if print_pidfile:
-            print(pid_file)
-
-        daemon = Daemonize(
-            app=appname,
-            pid=pid_file,
-            action=run,
-            auto_close_fds=False,
-            verbose=True,
-            logger=logger,
-        )
-        daemon.start()
-    else:
-        run()
+            daemon = Daemonize(
+                app=appname,
+                pid=pid_file,
+                action=run,
+                auto_close_fds=False,
+                verbose=True,
+                logger=logger,
+            )
+            daemon.start()
+        else:
+            run()
 
 
 def quit_with_error(error_string):
     message_lines = error_string.split("\n")
     line_length = max([len(l) for l in message_lines if len(l) < 80]) + 2
-    sys.stderr.write("*" * line_length + '\n')
+    sys.stderr.write("*" * line_length + "\n")
     for line in message_lines:
         sys.stderr.write(" %s\n" % (line.rstrip(),))
-    sys.stderr.write("*" * line_length + '\n')
+    sys.stderr.write("*" * line_length + "\n")
     sys.exit(1)
 
 
@@ -160,8 +149,7 @@ def listen_metrics(bind_addresses, port):
     """
     Start Prometheus metrics server.
     """
-    from synapse.metrics import RegistryProxy
-    from prometheus_client import start_http_server
+    from synapse.metrics import RegistryProxy, start_http_server
 
     for host in bind_addresses:
         logger.info("Starting metrics listener on %s:%d", host, port)
@@ -178,14 +166,7 @@ def listen_tcp(bind_addresses, port, factory, reactor=reactor, backlog=50):
     r = []
     for address in bind_addresses:
         try:
-            r.append(
-                reactor.listenTCP(
-                    port,
-                    factory,
-                    backlog,
-                    address
-                )
-            )
+            r.append(reactor.listenTCP(port, factory, backlog, address))
         except error.CannotListenError as e:
             check_bind_error(e, address, bind_addresses)
 
@@ -205,13 +186,7 @@ def listen_ssl(
     for address in bind_addresses:
         try:
             r.append(
-                reactor.listenSSL(
-                    port,
-                    factory,
-                    context_factory,
-                    backlog,
-                    address
-                )
+                reactor.listenSSL(port, factory, context_factory, backlog, address)
             )
         except error.CannotListenError as e:
             check_bind_error(e, address, bind_addresses)
@@ -243,15 +218,13 @@ def refresh_certificate(hs):
             if isinstance(i.factory, TLSMemoryBIOFactory):
                 addr = i.getHost()
                 logger.info(
-                    "Replacing TLS context factory on [%s]:%i", addr.host, addr.port,
+                    "Replacing TLS context factory on [%s]:%i", addr.host, addr.port
                 )
                 # We want to replace TLS factories with a new one, with the new
                 # TLS configuration. We do this by reaching in and pulling out
                 # the wrappedFactory, and then re-wrapping it.
                 i.factory = TLSMemoryBIOFactory(
-                    hs.tls_server_context_factory,
-                    False,
-                    i.factory.wrappedFactory
+                    hs.tls_server_context_factory, False, i.factory.wrappedFactory
                 )
         logger.info("Context factories updated.")
 
@@ -267,6 +240,7 @@ def start(hs, listeners=None):
     try:
         # Set up the SIGHUP machinery.
         if hasattr(signal, "SIGHUP"):
+
             def handle_sighup(*args, **kwargs):
                 for i in _sighup_callbacks:
                     i(hs)
@@ -277,6 +251,9 @@ def start(hs, listeners=None):
 
         # Load the certificate from disk.
         refresh_certificate(hs)
+
+        # Start the tracer
+        synapse.logging.opentracing.init_tracer(hs.config)
 
         # It is now safe to start your Synapse.
         hs.start_listening(listeners)
@@ -302,10 +279,8 @@ def setup_sentry(hs):
         return
 
     import sentry_sdk
-    sentry_sdk.init(
-        dsn=hs.config.sentry_dsn,
-        release=get_version_string(synapse),
-    )
+
+    sentry_sdk.init(dsn=hs.config.sentry_dsn, release=get_version_string(synapse))
 
     # We set some default tags that give some context to this instance
     with sentry_sdk.configure_scope() as scope:
@@ -326,7 +301,7 @@ def install_dns_limiter(reactor, max_dns_requests_in_flight=100):
     many DNS queries at once
     """
     new_resolver = _LimitedHostnameResolver(
-        reactor.nameResolver, max_dns_requests_in_flight,
+        reactor.nameResolver, max_dns_requests_in_flight
     )
 
     reactor.installNameResolver(new_resolver)
@@ -339,11 +314,17 @@ class _LimitedHostnameResolver(object):
     def __init__(self, resolver, max_dns_requests_in_flight):
         self._resolver = resolver
         self._limiter = Linearizer(
-            name="dns_client_limiter", max_count=max_dns_requests_in_flight,
+            name="dns_client_limiter", max_count=max_dns_requests_in_flight
         )
 
-    def resolveHostName(self, resolutionReceiver, hostName, portNumber=0,
-                        addressTypes=None, transportSemantics='TCP'):
+    def resolveHostName(
+        self,
+        resolutionReceiver,
+        hostName,
+        portNumber=0,
+        addressTypes=None,
+        transportSemantics="TCP",
+    ):
         # We need this function to return `resolutionReceiver` so we do all the
         # actual logic involving deferreds in a separate function.
 
@@ -363,8 +344,14 @@ class _LimitedHostnameResolver(object):
         return resolutionReceiver
 
     @defer.inlineCallbacks
-    def _resolve(self, resolutionReceiver, hostName, portNumber=0,
-                 addressTypes=None, transportSemantics='TCP'):
+    def _resolve(
+        self,
+        resolutionReceiver,
+        hostName,
+        portNumber=0,
+        addressTypes=None,
+        transportSemantics="TCP",
+    ):
 
         with (yield self._limiter.queue(())):
             # resolveHostName doesn't return a Deferred, so we need to hook into
@@ -374,8 +361,7 @@ class _LimitedHostnameResolver(object):
             receiver = _DeferredResolutionReceiver(resolutionReceiver, deferred)
 
             self._resolver.resolveHostName(
-                receiver, hostName, portNumber,
-                addressTypes, transportSemantics,
+                receiver, hostName, portNumber, addressTypes, transportSemantics
             )
 
             yield deferred

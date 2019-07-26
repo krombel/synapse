@@ -420,7 +420,7 @@ class RoomMemberWorkerStore(EventsWorkerStore):
                 table="room_memberships",
                 column="event_id",
                 iterable=missing_member_event_ids,
-                retcols=('user_id', 'display_name', 'avatar_url'),
+                retcols=("user_id", "display_name", "avatar_url"),
                 keyvalues={"membership": Membership.JOIN},
                 batch_size=500,
                 desc="_get_joined_users_from_context",
@@ -448,7 +448,7 @@ class RoomMemberWorkerStore(EventsWorkerStore):
 
     @cachedInlineCallbacks(max_entries=10000)
     def is_host_joined(self, room_id, host):
-        if '%' in host or '_' in host:
+        if "%" in host or "_" in host:
             raise Exception("Invalid host name")
 
         sql = """
@@ -490,7 +490,7 @@ class RoomMemberWorkerStore(EventsWorkerStore):
             Deferred: Resolves to True if the host is/was in the room, otherwise
             False.
         """
-        if '%' in host or '_' in host:
+        if "%" in host or "_" in host:
             raise Exception("Invalid host name")
 
         sql = """
@@ -574,6 +574,26 @@ class RoomMemberWorkerStore(EventsWorkerStore):
 
         count = yield self.runInteraction("did_forget_membership", f)
         defer.returnValue(count == 0)
+
+    @defer.inlineCallbacks
+    def get_rooms_user_has_been_in(self, user_id):
+        """Get all rooms that the user has ever been in.
+
+        Args:
+            user_id (str)
+
+        Returns:
+            Deferred[set[str]]: Set of room IDs.
+        """
+
+        room_ids = yield self._simple_select_onecol(
+            table="room_memberships",
+            keyvalues={"membership": Membership.JOIN, "user_id": user_id},
+            retcol="room_id",
+            desc="get_rooms_user_has_been_in",
+        )
+
+        return set(room_ids)
 
 
 class RoomMemberStore(RoomMemberWorkerStore):
@@ -723,7 +743,7 @@ class RoomMemberStore(RoomMemberWorkerStore):
                 room_id = row["room_id"]
                 try:
                     event_json = json.loads(row["json"])
-                    content = event_json['content']
+                    content = event_json["content"]
                 except Exception:
                     continue
 

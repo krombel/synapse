@@ -60,7 +60,7 @@ class PaginationChunk(object):
 class RelationPaginationToken(object):
     """Pagination token for relation pagination API.
 
-    As the results are order by topological ordering, we can use the
+    As the results are in topological order, we can use the
     `topological_ordering` and `stream_ordering` fields of the events at the
     boundaries of the chunk as pagination tokens.
 
@@ -468,9 +468,5 @@ class RelationsStore(RelationsWorkerStore):
         """
 
         self._simple_delete_txn(
-            txn,
-            table="event_relations",
-            keyvalues={
-                "event_id": redacted_event_id,
-            }
+            txn, table="event_relations", keyvalues={"event_id": redacted_event_id}
         )

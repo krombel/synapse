@@ -44,15 +44,16 @@ from synapse.api.errors import (
     RequestSendFailed,
     SynapseError,
 )
-from synapse.storage.keys import FetchKeyResult
-from synapse.util import logcontext, unwrapFirstError
-from synapse.util.async_helpers import yieldable_gather_results
-from synapse.util.logcontext import (
+from synapse.logging.context import (
     LoggingContext,
     PreserveLoggingContext,
+    make_deferred_yieldable,
     preserve_fn,
     run_in_background,
 )
+from synapse.storage.keys import FetchKeyResult
+from synapse.util import unwrapFirstError
+from synapse.util.async_helpers import yieldable_gather_results
 from synapse.util.metrics import Measure
 from synapse.util.retryutils import NotRetryingDestination
 
@@ -140,7 +141,7 @@ class Keyring(object):
         """
         req = VerifyJsonRequest(server_name, json_object, validity_time, request_name)
         requests = (req,)
-        return logcontext.make_deferred_yieldable(self._verify_objects(requests)[0])
+        return make_deferred_yieldable(self._verify_objects(requests)[0])
 
     def verify_json_objects_for_server(self, server_and_json):
         """Bulk verifies signatures of json objects, bulk fetching keys as
@@ -505,7 +506,7 @@ class BaseV2KeyFetcher(object):
         Returns:
             Deferred[dict[str, FetchKeyResult]]: map from key_id to result object
         """
-        ts_valid_until_ms = response_json[u"valid_until_ts"]
+        ts_valid_until_ms = response_json["valid_until_ts"]
 
         # start by extracting the keys from the response, since they may be required
         # to validate the signature on the response.
@@ -557,7 +558,7 @@ class BaseV2KeyFetcher(object):
 
         signed_key_json_bytes = encode_canonical_json(signed_key_json)
 
-        yield logcontext.make_deferred_yieldable(
+        yield make_deferred_yieldable(
             defer.gatherResults(
                 [
                     run_in_background(
@@ -612,12 +613,9 @@ class PerspectivesKeyFetcher(BaseV2KeyFetcher):
 
             defer.returnValue({})
 
-        results = yield logcontext.make_deferred_yieldable(
+        results = yield make_deferred_yieldable(
             defer.gatherResults(
-                [
-                    run_in_background(get_key, server)
-                    for server in self.key_servers
-                ],
+                [run_in_background(get_key, server) for server in self.key_servers],
                 consumeErrors=True,
             ).addErrback(unwrapFirstError)
         )
@@ -630,9 +628,7 @@ class PerspectivesKeyFetcher(BaseV2KeyFetcher):
         defer.returnValue(union_of_keys)
 
     @defer.inlineCallbacks
-    def get_server_verify_key_v2_indirect(
-        self, keys_to_fetch, key_server
-    ):
+    def get_server_verify_key_v2_indirect(self, keys_to_fetch, key_server):
         """
         Args:
             keys_to_fetch (dict[str, dict[str, int]]):
@@ -661,9 +657,9 @@ class PerspectivesKeyFetcher(BaseV2KeyFetcher):
                 destination=perspective_name,
                 path="/_matrix/key/v2/query",
                 data={
-                    u"server_keys": {
+                    "server_keys": {
                         server_name: {
-                            key_id: {u"minimum_valid_until_ts": min_valid_ts}
+                            key_id: {"minimum_valid_until_ts": min_valid_ts}
                             for key_id, min_valid_ts in server_keys.items()
                         }
                         for server_name, server_keys in keys_to_fetch.items()
@@ -690,10 +686,7 @@ class PerspectivesKeyFetcher(BaseV2KeyFetcher):
                 )
 
             try:
-                self._validate_perspectives_response(
-                    key_server,
-                    response,
-                )
+                self._validate_perspectives_response(key_server, response)
 
                 processed_response = yield self.process_v2_response(
                     perspective_name, response, time_added_ms=time_now_ms
@@ -720,9 +713,7 @@ class PerspectivesKeyFetcher(BaseV2KeyFetcher):
 
         defer.returnValue(keys)
 
-    def _validate_perspectives_response(
-        self, key_server, response,
-    ):
+    def _validate_perspectives_response(self, key_server, response):
         """Optionally check the signature on the result of a /key/query request
 
         Args:
@@ -739,13 +730,13 @@ class PerspectivesKeyFetcher(BaseV2KeyFetcher):
             return
 
         if (
-            u"signatures" not in response
-            or perspective_name not in response[u"signatures"]
+            "signatures" not in response
+            or perspective_name not in response["signatures"]
         ):
             raise KeyLookupError("Response not signed by the notary server")
 
         verified = False
-        for key_id in response[u"signatures"][perspective_name]:
+        for key_id in response["signatures"][perspective_name]:
             if key_id in perspective_keys:
                 verify_signed_json(response, perspective_name, perspective_keys[key_id])
                 verified = True
@@ -754,7 +745,7 @@ class PerspectivesKeyFetcher(BaseV2KeyFetcher):
             raise KeyLookupError(
                 "Response not signed with a known key: signed with: %r, known keys: %r"
                 % (
-                    list(response[u"signatures"][perspective_name].keys()),
+                    list(response["signatures"][perspective_name].keys()),
                     list(perspective_keys.keys()),
                 )
             )
@@ -826,7 +817,6 @@ class ServerKeyFetcher(BaseV2KeyFetcher):
                     path="/_matrix/key/v2/server/"
                     + urllib.parse.quote(requested_key_id),
                     ignore_backoff=True,
-
                     # we only give the remote server 10s to respond. It should be an
                     # easy request to handle, so if it doesn't reply within 10s, it's
                     # probably not going to.
