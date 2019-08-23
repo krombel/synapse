@@ -157,7 +157,7 @@ class SyncRestServlet(RestServlet):
             time_now, sync_result, requester.access_token_id, filter
         )
 
-        defer.returnValue((200, response_content))
+        return (200, response_content)
 
     @defer.inlineCallbacks
     def encode_response(self, time_now, sync_result, access_token_id, filter):
@@ -231,7 +231,7 @@ class SyncRestServlet(RestServlet):
             if groups:
                 response["groups"] = groups
 
-        defer.returnValue(response)
+        return response
 
     @staticmethod
     def encode_presence(events, time_now):
@@ -279,7 +279,7 @@ class SyncRestServlet(RestServlet):
                 event_formatter=event_formatter,
             )
 
-        defer.returnValue(joined)
+        return joined
 
     @defer.inlineCallbacks
     def encode_invited(self, rooms, time_now, token_id, event_formatter):
@@ -315,7 +315,7 @@ class SyncRestServlet(RestServlet):
             invited_state.append(invite)
             invited[room.room_id] = {"invite_state": {"events": invited_state}}
 
-        defer.returnValue(invited)
+        return invited
 
     @defer.inlineCallbacks
     def encode_archived(self, rooms, time_now, token_id, event_fields, event_formatter):
@@ -348,7 +348,7 @@ class SyncRestServlet(RestServlet):
                 event_formatter=event_formatter,
             )
 
-        defer.returnValue(joined)
+        return joined
 
     @defer.inlineCallbacks
     def encode_room(
@@ -422,7 +422,7 @@ class SyncRestServlet(RestServlet):
             result["unread_notifications"] = room.unread_notifications
             result["summary"] = room.summary
 
-        defer.returnValue(result)
+        return result
 
 
 def register_servlets(hs, http_server):

@@ -57,7 +57,7 @@ class GetFilterRestServlet(RestServlet):
                 user_localpart=target_user.localpart, filter_id=filter_id
             )
 
-            defer.returnValue((200, filter.get_filter_json()))
+            return (200, filter.get_filter_json())
         except (KeyError, StoreError):
             raise SynapseError(404, "No such filter", errcode=Codes.NOT_FOUND)
 
@@ -90,7 +90,7 @@ class CreateFilterRestServlet(RestServlet):
             user_localpart=target_user.localpart, user_filter=content
         )
 
-        defer.returnValue((200, {"filter_id": str(filter_id)}))
+        return (200, {"filter_id": str(filter_id)})
 
 
 def register_servlets(hs, http_server):
