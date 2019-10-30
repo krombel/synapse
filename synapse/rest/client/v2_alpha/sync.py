@@ -157,7 +157,7 @@ class SyncRestServlet(RestServlet):
             time_now, sync_result, requester.access_token_id, filter
         )
 
-        return (200, response_content)
+        return 200, response_content
 
     @defer.inlineCallbacks
     def encode_response(self, time_now, sync_result, access_token_id, filter):

@@ -56,7 +56,7 @@ Code style
 
 All Matrix projects have a well-defined code-style - and sometimes we've even
 got as far as documenting it... For instance, synapse's code style doc lives
-at https://github.com/matrix-org/synapse/tree/master/docs/code_style.rst.
+at https://github.com/matrix-org/synapse/tree/master/docs/code_style.md.
 
 Please ensure your changes match the cosmetic style of the existing project,
 and **never** mix cosmetic and functional changes in the same commit, as it
@@ -113,17 +113,6 @@ If your change affects both the debian packaging *and* files outside the debian
 directory, you will need both a regular newsfragment *and* an entry in the
 debian changelog. (Though typically such changes should be submitted as two
 separate pull requests.)
-
-Attribution
-~~~~~~~~~~~
-
-Everyone who contributes anything to Matrix is welcome to be listed in the
-AUTHORS.rst file for the project in question. Please feel free to include a
-change to AUTHORS.rst in your pull request to list yourself and a short
-description of the area(s) you've worked on. Also, we sometimes have swag to
-give away to contributors - if you feel that Matrix-branded apparel is missing
-from your life, please mail us your shipping address to matrix at matrix.org and
-we'll try to fix it :)
 
 Sign off
 ~~~~~~~~
