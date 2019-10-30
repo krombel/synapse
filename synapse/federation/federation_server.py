@@ -36,7 +36,6 @@ from synapse.api.errors import (
     UnsupportedRoomVersionError,
 )
 from synapse.api.room_versions import KNOWN_ROOM_VERSIONS
-from synapse.crypto.event_signing import compute_event_signature
 from synapse.events import room_version_to_event_format
 from synapse.federation.federation_base import FederationBase, event_from_pdu_json
 from synapse.federation.persistence import TransactionActions
@@ -322,18 +321,6 @@ class FederationServer(FederationBase):
         pdus = yield self.handler.get_state_for_pdu(room_id, event_id)
         auth_chain = yield self.store.get_auth_chain([pdu.event_id for pdu in pdus])
 
-        for event in auth_chain:
-            # We sign these again because there was a bug where we
-            # incorrectly signed things the first time round
-            if self.hs.is_mine_id(event.event_id):
-                event.signatures.update(
-                    compute_event_signature(
-                        event.get_pdu_json(),
-                        self.hs.hostname,
-                        self.hs.config.signing_key[0],
-                    )
-                )
-
         return {
             "pdus": [pdu.get_pdu_json() for pdu in pdus],
             "auth_chain": [pdu.get_pdu_json() for pdu in auth_chain],
@@ -383,6 +370,7 @@ class FederationServer(FederationBase):
         pdu = event_from_pdu_json(content, format_ver)
         origin_host, _ = parse_server_name(origin)
         yield self.check_server_matches_acl(origin_host, pdu.room_id)
+        pdu = yield self._check_sigs_and_hash(room_version, pdu)
         ret_pdu = yield self.handler.on_invite_request(origin, pdu)
         time_now = self._clock.time_msec()
         return {"event": ret_pdu.get_pdu_json(time_now)}
@@ -399,6 +387,9 @@ class FederationServer(FederationBase):
         yield self.check_server_matches_acl(origin_host, pdu.room_id)
 
         logger.debug("on_send_join_request: pdu sigs: %s", pdu.signatures)
+
+        pdu = yield self._check_sigs_and_hash(room_version, pdu)
+
         res_pdus = yield self.handler.on_send_join_request(origin, pdu)
         time_now = self._clock.time_msec()
         return (
@@ -434,6 +425,9 @@ class FederationServer(FederationBase):
         yield self.check_server_matches_acl(origin_host, pdu.room_id)
 
         logger.debug("on_send_leave_request: pdu sigs: %s", pdu.signatures)
+
+        pdu = yield self._check_sigs_and_hash(room_version, pdu)
+
         yield self.handler.on_send_leave_request(origin, pdu)
         return 200, {}
 

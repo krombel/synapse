@@ -30,6 +30,7 @@ from unpaddedbase64 import decode_base64
 
 from twisted.internet import defer
 
+from synapse import event_auth
 from synapse.api.constants import EventTypes, Membership, RejectedReason
 from synapse.api.errors import (
     AuthError,
@@ -1221,7 +1222,6 @@ class FederationHandler(BaseHandler):
         Returns:
             Deferred[FrozenEvent]
         """
-
         if get_domain_from_id(user_id) != origin:
             logger.info(
                 "Got /make_join request for user %r from different origin %s, ignoring",
@@ -1279,10 +1279,19 @@ class FederationHandler(BaseHandler):
         event = pdu
 
         logger.debug(
-            "on_send_join_request: Got event: %s, signatures: %s",
+            "on_send_join_request from %s: Got event: %s, signatures: %s",
+            origin,
             event.event_id,
             event.signatures,
         )
+
+        if get_domain_from_id(event.sender) != origin:
+            logger.info(
+                "Got /send_join request for user %r from different origin %s",
+                event.sender,
+                origin,
+            )
+            raise SynapseError(403, "User not from origin", Codes.FORBIDDEN)
 
         event.internal_metadata.outlier = False
         # Send this event on behalf of the origin server.
@@ -1501,6 +1510,14 @@ class FederationHandler(BaseHandler):
             event.event_id,
             event.signatures,
         )
+
+        if get_domain_from_id(event.sender) != origin:
+            logger.info(
+                "Got /send_leave request for user %r from different origin %s",
+                event.sender,
+                origin,
+            )
+            raise SynapseError(403, "User not from origin", Codes.FORBIDDEN)
 
         event.internal_metadata.outlier = False
 
@@ -1763,7 +1780,7 @@ class FederationHandler(BaseHandler):
                 auth_for_e[(EventTypes.Create, "")] = create_event
 
             try:
-                self.auth.check(room_version, e, auth_events=auth_for_e)
+                event_auth.check(room_version, e, auth_events=auth_for_e)
             except SynapseError as err:
                 # we may get SynapseErrors here as well as AuthErrors. For
                 # instance, there are a couple of (ancient) events in some
@@ -1919,7 +1936,7 @@ class FederationHandler(BaseHandler):
             }
 
             try:
-                self.auth.check(room_version, event, auth_events=current_auth_events)
+                event_auth.check(room_version, event, auth_events=current_auth_events)
             except AuthError as e:
                 logger.warn("Soft-failing %r because %s", event, e)
                 event.internal_metadata.soft_failed = True
@@ -2018,7 +2035,7 @@ class FederationHandler(BaseHandler):
             )
 
         try:
-            self.auth.check(room_version, event, auth_events=auth_events)
+            event_auth.check(room_version, event, auth_events=auth_events)
         except AuthError as e:
             logger.warn("Failed auth resolution for %r because %s", event, e)
             raise e
@@ -2181,102 +2198,9 @@ class FederationHandler(BaseHandler):
 
             auth_events.update(new_state)
 
-            different_auth = event_auth_events.difference(
-                e.event_id for e in auth_events.values()
-            )
-
             yield self._update_context_for_auth_events(
                 event, context, auth_events, event_key
             )
-
-        if not different_auth:
-            # we're done
-            return
-
-        logger.info(
-            "auth_events still refers to events which are not in the calculated auth "
-            "chain after state resolution: %s",
-            different_auth,
-        )
-
-        # Only do auth resolution if we have something new to say.
-        # We can't prove an auth failure.
-        do_resolution = False
-
-        for e_id in different_auth:
-            if e_id in have_events:
-                if have_events[e_id] == RejectedReason.NOT_ANCESTOR:
-                    do_resolution = True
-                    break
-
-        if not do_resolution:
-            logger.info(
-                "Skipping auth resolution due to lack of provable rejection reasons"
-            )
-            return
-
-        logger.info("Doing auth resolution")
-
-        prev_state_ids = yield context.get_prev_state_ids(self.store)
-
-        # 1. Get what we think is the auth chain.
-        auth_ids = yield self.auth.compute_auth_events(event, prev_state_ids)
-        local_auth_chain = yield self.store.get_auth_chain(auth_ids, include_given=True)
-
-        try:
-            # 2. Get remote difference.
-            try:
-                result = yield self.federation_client.query_auth(
-                    origin, event.room_id, event.event_id, local_auth_chain
-                )
-            except RequestSendFailed as e:
-                # The other side isn't around or doesn't implement the
-                # endpoint, so lets just bail out.
-                logger.info("Failed to query auth from remote: %s", e)
-                return
-
-            seen_remotes = yield self.store.have_seen_events(
-                [e.event_id for e in result["auth_chain"]]
-            )
-
-            # 3. Process any remote auth chain events we haven't seen.
-            for ev in result["auth_chain"]:
-                if ev.event_id in seen_remotes:
-                    continue
-
-                if ev.event_id == event.event_id:
-                    continue
-
-                try:
-                    auth_ids = ev.auth_event_ids()
-                    auth = {
-                        (e.type, e.state_key): e
-                        for e in result["auth_chain"]
-                        if e.event_id in auth_ids or event.type == EventTypes.Create
-                    }
-                    ev.internal_metadata.outlier = True
-
-                    logger.debug(
-                        "do_auth %s different_auth: %s", event.event_id, e.event_id
-                    )
-
-                    yield self._handle_new_event(origin, ev, auth_events=auth)
-
-                    if ev.event_id in event_auth_events:
-                        auth_events[(ev.type, ev.state_key)] = ev
-                except AuthError:
-                    pass
-
-        except Exception:
-            # FIXME:
-            logger.exception("Failed to query auth chain")
-
-        # 4. Look at rejects and their proofs.
-        # TODO.
-
-        yield self._update_context_for_auth_events(
-            event, context, auth_events, event_key
-        )
 
     @defer.inlineCallbacks
     def _update_context_for_auth_events(self, event, context, auth_events, event_key):
@@ -2444,15 +2368,6 @@ class FederationHandler(BaseHandler):
 
             reason_map[e.event_id] = reason
 
-            if reason == RejectedReason.AUTH_ERROR:
-                pass
-            elif reason == RejectedReason.REPLACED:
-                # TODO: Get proof
-                pass
-            elif reason == RejectedReason.NOT_ANCESTOR:
-                # TODO: Get proof.
-                pass
-
         logger.debug("construct_auth_difference returning")
 
         return {
@@ -2570,7 +2485,7 @@ class FederationHandler(BaseHandler):
         )
 
         try:
-            self.auth.check_from_context(room_version, event, context)
+            yield self.auth.check_from_context(room_version, event, context)
         except AuthError as e:
             logger.warn("Denying third party invite %r because %s", event, e)
             raise e
@@ -2599,7 +2514,12 @@ class FederationHandler(BaseHandler):
                 original_invite_id, allow_none=True
             )
         if original_invite:
-            display_name = original_invite.content["display_name"]
+            # If the m.room.third_party_invite event's content is empty, it means the
+            # invite has been revoked. In this case, we don't have to raise an error here
+            # because the auth check will fail on the invite (because it's not able to
+            # fetch public keys from the m.room.third_party_invite event's content, which
+            # is empty).
+            display_name = original_invite.content.get("display_name")
             event_dict["content"]["third_party_invite"]["display_name"] = display_name
         else:
             logger.info(

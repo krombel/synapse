@@ -116,11 +116,11 @@ class SyncRestServlet(RestServlet):
 
         request_key = (user, timeout, since, filter_id, full_state, device_id)
 
-        filter = yield self.filtering.parse_filter(filter_id, user.localpart)
+        filter_collection = yield self.filtering.parse_filter(filter_id, user.localpart)
 
         sync_config = SyncConfig(
             user=user,
-            filter_collection=filter,
+            filter_collection=filter_collection,
             is_guest=requester.is_guest,
             request_key=request_key,
             device_id=device_id,
@@ -154,7 +154,7 @@ class SyncRestServlet(RestServlet):
 
         time_now = self.clock.time_msec()
         response_content = yield self.encode_response(
-            time_now, sync_result, requester.access_token_id, filter
+            time_now, sync_result, requester.access_token_id, filter_collection
         )
 
         return 200, response_content

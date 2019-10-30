@@ -24,6 +24,8 @@ from synapse.util.stringutils import random_string_with_symbols
 
 
 class AccountValidityConfig(Config):
+    section = "accountvalidity"
+
     def __init__(self, config, synapse_config):
         self.enabled = config.get("enabled", False)
         self.renew_by_email_enabled = "renew_at" in config
@@ -77,6 +79,8 @@ class AccountValidityConfig(Config):
 
 
 class RegistrationConfig(Config):
+    section = "registration"
+
     def read_config(self, config, **kwargs):
         self.enable_registration = bool(
             strtobool(str(config.get("enable_registration", False)))
@@ -176,7 +180,7 @@ class RegistrationConfig(Config):
         # where d is equal to 10%% of the validity period.
         #
         #account_validity:
-        #  enabled: True
+        #  enabled: true
         #  period: 6w
         #  renew_at: 1w
         #  renew_email_subject: "Renew your %%(app)s account"
