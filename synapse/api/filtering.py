@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 # Copyright 2015, 2016 OpenMarket Ltd
+# Copyright 2017 Vector Creations Ltd
+# Copyright 2018-2019 New Vector Ltd
+# Copyright 2019 The Matrix.org Foundation C.I.C.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -144,9 +147,8 @@ class Filtering(object):
         self.check_valid_filter(user_filter)
         return self.store.add_user_filter(user_localpart, user_filter)
 
-    @defer.inlineCallbacks
-    def parse_filter(self, filter_data, user_localpart=None):
-        filter = DEFAULT_FILTER_COLLECTION
+    async def parse_filter(self, filter_data, user_localpart=None):
+        filter_collection = DEFAULT_FILTER_COLLECTION
         if filter_data:
             if filter_data.startswith('{'):
                 try:
@@ -157,14 +159,21 @@ class Filtering(object):
                 except Exception:
                     raise SynapseError(400, "Invalid filter JSON")
                 self.check_valid_filter(filter_object)
-                filter = FilterCollection(filter_object)
+                filter_collection = FilterCollection(filter_object)
             else:
                 if not user_localpart:
                     raise ValueError("user_localpart is undefined")
-                filter = yield self.get_user_filter(
-                    user_localpart, filter_data
-                )
-        defer.returnValue(filter)
+                try:
+                    filter_collection = await self.get_user_filter(
+                        user_localpart, filter_data
+                    )
+                except StoreError as err:
+                    if err.code != 404:
+                        raise
+                    # fix up the description and errcode to be more useful
+                    raise SynapseError(400, "No such filter", errcode=Codes.INVALID_PARAM)
+
+        return filter_collection
 
     # TODO(paul): surely we should probably add a delete_user_filter or
     #   replace_user_filter at some point? There's no REST API specified for

@@ -15,8 +15,6 @@
 
 import logging
 
-from twisted.internet import defer
-
 from synapse.api.errors import AuthError, NotFoundError, StoreError, SynapseError
 from synapse.api.filtering import set_timeline_upper_limit
 from synapse.http.servlet import RestServlet, parse_json_object_from_request
@@ -36,10 +34,9 @@ class GetFilterRestServlet(RestServlet):
         self.auth = hs.get_auth()
         self.filtering = hs.get_filtering()
 
-    @defer.inlineCallbacks
-    def on_GET(self, request, user_id, filter_id):
+    async def on_GET(self, request, user_id, filter_id):
         target_user = UserID.from_string(user_id)
-        requester = yield self.auth.get_user_by_req(request)
+        requester = await self.auth.get_user_by_req(request)
 
         if target_user != requester.user:
             raise AuthError(403, "Cannot get filters for other users")
@@ -53,7 +50,7 @@ class GetFilterRestServlet(RestServlet):
             raise SynapseError(400, "Invalid filter_id")
 
         try:
-            filter_collection = yield self.filtering.get_user_filter(
+            filter_collection = await self.filtering.get_user_filter(
                 user_localpart=target_user.localpart, filter_id=filter_id
             )
         except StoreError as e:
@@ -73,11 +70,10 @@ class CreateFilterRestServlet(RestServlet):
         self.auth = hs.get_auth()
         self.filtering = hs.get_filtering()
 
-    @defer.inlineCallbacks
-    def on_POST(self, request, user_id):
+    async def on_POST(self, request, user_id):
 
         target_user = UserID.from_string(user_id)
-        requester = yield self.auth.get_user_by_req(request)
+        requester = await self.auth.get_user_by_req(request)
 
         if target_user != requester.user:
             raise AuthError(403, "Cannot create filters for other users")
@@ -88,7 +84,7 @@ class CreateFilterRestServlet(RestServlet):
         content = parse_json_object_from_request(request)
         set_timeline_upper_limit(content, self.hs.config.filter_timeline_limit)
 
-        filter_id = yield self.filtering.add_user_filter(
+        filter_id = await self.filtering.add_user_filter(
             user_localpart=target_user.localpart, user_filter=content
         )
 
