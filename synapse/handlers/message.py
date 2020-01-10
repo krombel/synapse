@@ -46,8 +46,9 @@ from synapse.events.validator import EventValidator
 from synapse.logging.context import run_in_background
 from synapse.metrics.background_process_metrics import run_as_background_process
 from synapse.replication.http.send_event import ReplicationSendEventRestServlet
+from synapse.storage.data_stores.main.events_worker import EventRedactBehaviour
 from synapse.storage.state import StateFilter
-from synapse.types import RoomAlias, UserID, create_requester
+from synapse.types import Collection, RoomAlias, UserID, create_requester
 from synapse.util.async_helpers import Linearizer
 from synapse.util.frozenutils import frozendict_json_encoder
 from synapse.util.metrics import measure_func
@@ -421,7 +422,7 @@ class EventCreationHandler(object):
         event_dict,
         token_id=None,
         txn_id=None,
-        prev_events_and_hashes=None,
+        prev_event_ids: Optional[Collection[str]] = None,
         require_consent=True,
     ):
         """
@@ -438,10 +439,9 @@ class EventCreationHandler(object):
             token_id (str)
             txn_id (str)
 
-            prev_events_and_hashes (list[(str, dict[str, str], int)]|None):
+            prev_event_ids:
                 the forward extremities to use as the prev_events for the
-                new event. For each event, a tuple of (event_id, hashes, depth)
-                where *hashes* is a map from algorithm to hash.
+                new event.
 
                 If None, they will be requested from the database.
 
@@ -497,9 +497,7 @@ class EventCreationHandler(object):
             builder.internal_metadata.txn_id = txn_id
 
         event, context = yield self.create_new_client_event(
-            builder=builder,
-            requester=requester,
-            prev_events_and_hashes=prev_events_and_hashes,
+            builder=builder, requester=requester, prev_event_ids=prev_event_ids,
         )
 
         # In an ideal world we wouldn't need the second part of this condition. However,
@@ -514,7 +512,7 @@ class EventCreationHandler(object):
             # federation as well as those created locally. As of room v3, aliases events
             # can be created by users that are not in the room, therefore we have to
             # tolerate them in event_auth.check().
-            prev_state_ids = yield context.get_prev_state_ids(self.store)
+            prev_state_ids = yield context.get_prev_state_ids()
             prev_event_id = prev_state_ids.get((EventTypes.Member, event.sender))
             prev_event = (
                 yield self.store.get_event(prev_event_id, allow_none=True)
@@ -664,7 +662,7 @@ class EventCreationHandler(object):
         If so, returns the version of the event in context.
         Otherwise, returns None.
         """
-        prev_state_ids = yield context.get_prev_state_ids(self.store)
+        prev_state_ids = yield context.get_prev_state_ids()
         prev_event_id = prev_state_ids.get((event.type, event.state_key))
         if not prev_event_id:
             return
@@ -713,7 +711,7 @@ class EventCreationHandler(object):
     @measure_func("create_new_client_event")
     @defer.inlineCallbacks
     def create_new_client_event(
-        self, builder, requester=None, prev_events_and_hashes=None
+        self, builder, requester=None, prev_event_ids: Optional[Collection[str]] = None
     ):
         """Create a new event for a local client
 
@@ -722,10 +720,9 @@ class EventCreationHandler(object):
 
             requester (synapse.types.Requester|None):
 
-            prev_events_and_hashes (list[(str, dict[str, str], int)]|None):
+            prev_event_ids:
                 the forward extremities to use as the prev_events for the
-                new event. For each event, a tuple of (event_id, hashes, depth)
-                where *hashes* is a map from algorithm to hash.
+                new event.
 
                 If None, they will be requested from the database.
 
@@ -733,22 +730,15 @@ class EventCreationHandler(object):
             Deferred[(synapse.events.EventBase, synapse.events.snapshot.EventContext)]
         """
 
-        if prev_events_and_hashes is not None:
-            assert len(prev_events_and_hashes) <= 10, (
+        if prev_event_ids is not None:
+            assert len(prev_event_ids) <= 10, (
                 "Attempting to create an event with %i prev_events"
-                % (len(prev_events_and_hashes),)
+                % (len(prev_event_ids),)
             )
         else:
-            prev_events_and_hashes = yield self.store.get_prev_events_for_room(
-                builder.room_id
-            )
+            prev_event_ids = yield self.store.get_prev_events_for_room(builder.room_id)
 
-        prev_events = [
-            (event_id, prev_hashes)
-            for event_id, prev_hashes, _ in prev_events_and_hashes
-        ]
-
-        event = yield builder.build(prev_event_ids=[p for p, _ in prev_events])
+        event = yield builder.build(prev_event_ids=prev_event_ids)
         context = yield self.state.compute_event_context(event)
         if requester:
             context.app_service = requester.app_service
@@ -875,7 +865,7 @@ class EventCreationHandler(object):
             if event.type == EventTypes.Redaction:
                 original_event = yield self.store.get_event(
                     event.redacts,
-                    check_redacted=False,
+                    redact_behaviour=EventRedactBehaviour.AS_IS,
                     get_prev_content=False,
                     allow_rejected=False,
                     allow_none=True,
@@ -913,7 +903,7 @@ class EventCreationHandler(object):
                 def is_inviter_member_event(e):
                     return e.type == EventTypes.Member and e.sender == event.sender
 
-                current_state_ids = yield context.get_current_state_ids(self.store)
+                current_state_ids = yield context.get_current_state_ids()
 
                 state_to_include_ids = [
                     e_id
@@ -952,7 +942,7 @@ class EventCreationHandler(object):
         if event.type == EventTypes.Redaction:
             original_event = yield self.store.get_event(
                 event.redacts,
-                check_redacted=False,
+                redact_behaviour=EventRedactBehaviour.AS_IS,
                 get_prev_content=False,
                 allow_rejected=False,
                 allow_none=True,
@@ -966,7 +956,7 @@ class EventCreationHandler(object):
                 if original_event.room_id != event.room_id:
                     raise SynapseError(400, "Cannot redact event from a different room")
 
-            prev_state_ids = yield context.get_prev_state_ids(self.store)
+            prev_state_ids = yield context.get_prev_state_ids()
             auth_events_ids = yield self.auth.compute_auth_events(
                 event, prev_state_ids, for_verification=True
             )
@@ -988,7 +978,7 @@ class EventCreationHandler(object):
                 event.internal_metadata.recheck_redaction = False
 
         if event.type == EventTypes.Create:
-            prev_state_ids = yield context.get_prev_state_ids(self.store)
+            prev_state_ids = yield context.get_prev_state_ids()
             if prev_state_ids:
                 raise AuthError(403, "Changing the room create event is forbidden")
 
@@ -1041,9 +1031,7 @@ class EventCreationHandler(object):
             # For each room we need to find a joined member we can use to send
             # the dummy event with.
 
-            prev_events_and_hashes = yield self.store.get_prev_events_for_room(room_id)
-
-            latest_event_ids = (event_id for (event_id, _, _) in prev_events_and_hashes)
+            latest_event_ids = yield self.store.get_prev_events_for_room(room_id)
 
             members = yield self.state.get_current_users_in_room(
                 room_id, latest_event_ids=latest_event_ids
@@ -1062,7 +1050,7 @@ class EventCreationHandler(object):
                             "room_id": room_id,
                             "sender": user_id,
                         },
-                        prev_events_and_hashes=prev_events_and_hashes,
+                        prev_event_ids=latest_event_ids,
                     )
 
                     event.internal_metadata.proactively_send = False
