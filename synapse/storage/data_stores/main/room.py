@@ -18,7 +18,8 @@ import collections
 import logging
 import re
 from abc import abstractmethod
-from typing import Optional, Tuple
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
 
 from six import integer_types
 
@@ -44,6 +45,18 @@ OpsLevel = collections.namedtuple(
 RatelimitOverride = collections.namedtuple(
     "RatelimitOverride", ("messages_per_second", "burst_count")
 )
+
+
+class RoomSortOrder(Enum):
+    """
+    Enum to define the sorting method used when returning rooms with get_rooms_paginate
+
+    ALPHABETICAL = sort rooms alphabetically by name
+    SIZE = sort rooms by membership size, highest to lowest
+    """
+
+    ALPHABETICAL = "alphabetical"
+    SIZE = "size"
 
 
 class RoomWorkerStore(SQLBaseStore):
@@ -281,6 +294,116 @@ class RoomWorkerStore(SQLBaseStore):
             desc="is_room_blocked",
         )
 
+    async def get_rooms_paginate(
+        self,
+        start: int,
+        limit: int,
+        order_by: RoomSortOrder,
+        reverse_order: bool,
+        search_term: Optional[str],
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Function to retrieve a paginated list of rooms as json.
+
+        Args:
+            start: offset in the list
+            limit: maximum amount of rooms to retrieve
+            order_by: the sort order of the returned list
+            reverse_order: whether to reverse the room list
+            search_term: a string to filter room names by
+        Returns:
+            A list of room dicts and an integer representing the total number of
+            rooms that exist given this query
+        """
+        # Filter room names by a string
+        where_statement = ""
+        if search_term:
+            where_statement = "WHERE state.name LIKE ?"
+
+            # Our postgres db driver converts ? -> %s in SQL strings as that's the
+            # placeholder for postgres.
+            # HOWEVER, if you put a % into your SQL then everything goes wibbly.
+            # To get around this, we're going to surround search_term with %'s
+            # before giving it to the database in python instead
+            search_term = "%" + search_term + "%"
+
+        # Set ordering
+        if RoomSortOrder(order_by) == RoomSortOrder.SIZE:
+            order_by_column = "curr.joined_members"
+            order_by_asc = False
+        elif RoomSortOrder(order_by) == RoomSortOrder.ALPHABETICAL:
+            # Sort alphabetically
+            order_by_column = "state.name"
+            order_by_asc = True
+        else:
+            raise StoreError(
+                500, "Incorrect value for order_by provided: %s" % order_by
+            )
+
+        # Whether to return the list in reverse order
+        if reverse_order:
+            # Flip the boolean
+            order_by_asc = not order_by_asc
+
+        # Create one query for getting the limited number of events that the user asked
+        # for, and another query for getting the total number of events that could be
+        # returned. Thus allowing us to see if there are more events to paginate through
+        info_sql = """
+            SELECT state.room_id, state.name, state.canonical_alias, curr.joined_members
+            FROM room_stats_state state
+            INNER JOIN room_stats_current curr USING (room_id)
+            %s
+            ORDER BY %s %s
+            LIMIT ?
+            OFFSET ?
+        """ % (
+            where_statement,
+            order_by_column,
+            "ASC" if order_by_asc else "DESC",
+        )
+
+        # Use a nested SELECT statement as SQL can't count(*) with an OFFSET
+        count_sql = """
+            SELECT count(*) FROM (
+              SELECT room_id FROM room_stats_state state
+              %s
+            ) AS get_room_ids
+        """ % (
+            where_statement,
+        )
+
+        def _get_rooms_paginate_txn(txn):
+            # Execute the data query
+            sql_values = (limit, start)
+            if search_term:
+                # Add the search term into the WHERE clause
+                sql_values = (search_term,) + sql_values
+            txn.execute(info_sql, sql_values)
+
+            # Refactor room query data into a structured dictionary
+            rooms = []
+            for room in txn:
+                rooms.append(
+                    {
+                        "room_id": room[0],
+                        "name": room[1],
+                        "canonical_alias": room[2],
+                        "joined_members": room[3],
+                    }
+                )
+
+            # Execute the count query
+
+            # Add the search term into the WHERE clause if present
+            sql_values = (search_term,) if search_term else ()
+            txn.execute(count_sql, sql_values)
+
+            room_count = txn.fetchone()
+            return rooms, room_count[0]
+
+        return await self.db.runInteraction(
+            "get_rooms_paginate", _get_rooms_paginate_txn,
+        )
+
     @cachedInlineCallbacks(max_entries=10000)
     def get_ratelimit_for_user(self, user_id):
         """Check if there are any overrides for ratelimiting for the given
@@ -365,6 +488,248 @@ class RoomWorkerStore(SQLBaseStore):
             row["max_lifetime"] = self.config.retention_default_max_lifetime
 
         defer.returnValue(row)
+
+    def get_media_mxcs_in_room(self, room_id):
+        """Retrieves all the local and remote media MXC URIs in a given room
+
+        Args:
+            room_id (str)
+
+        Returns:
+            The local and remote media as a lists of tuples where the key is
+            the hostname and the value is the media ID.
+        """
+
+        def _get_media_mxcs_in_room_txn(txn):
+            local_mxcs, remote_mxcs = self._get_media_mxcs_in_room_txn(txn, room_id)
+            local_media_mxcs = []
+            remote_media_mxcs = []
+
+            # Convert the IDs to MXC URIs
+            for media_id in local_mxcs:
+                local_media_mxcs.append("mxc://%s/%s" % (self.hs.hostname, media_id))
+            for hostname, media_id in remote_mxcs:
+                remote_media_mxcs.append("mxc://%s/%s" % (hostname, media_id))
+
+            return local_media_mxcs, remote_media_mxcs
+
+        return self.db.runInteraction(
+            "get_media_ids_in_room", _get_media_mxcs_in_room_txn
+        )
+
+    def quarantine_media_ids_in_room(self, room_id, quarantined_by):
+        """For a room loops through all events with media and quarantines
+        the associated media
+        """
+
+        logger.info("Quarantining media in room: %s", room_id)
+
+        def _quarantine_media_in_room_txn(txn):
+            local_mxcs, remote_mxcs = self._get_media_mxcs_in_room_txn(txn, room_id)
+            total_media_quarantined = 0
+
+            # Now update all the tables to set the quarantined_by flag
+
+            txn.executemany(
+                """
+                UPDATE local_media_repository
+                SET quarantined_by = ?
+                WHERE media_id = ?
+            """,
+                ((quarantined_by, media_id) for media_id in local_mxcs),
+            )
+
+            txn.executemany(
+                """
+                    UPDATE remote_media_cache
+                    SET quarantined_by = ?
+                    WHERE media_origin = ? AND media_id = ?
+                """,
+                (
+                    (quarantined_by, origin, media_id)
+                    for origin, media_id in remote_mxcs
+                ),
+            )
+
+            total_media_quarantined += len(local_mxcs)
+            total_media_quarantined += len(remote_mxcs)
+
+            return total_media_quarantined
+
+        return self.db.runInteraction(
+            "quarantine_media_in_room", _quarantine_media_in_room_txn
+        )
+
+    def _get_media_mxcs_in_room_txn(self, txn, room_id):
+        """Retrieves all the local and remote media MXC URIs in a given room
+
+        Args:
+            txn (cursor)
+            room_id (str)
+
+        Returns:
+            The local and remote media as a lists of tuples where the key is
+            the hostname and the value is the media ID.
+        """
+        mxc_re = re.compile("^mxc://([^/]+)/([^/#?]+)")
+
+        sql = """
+            SELECT stream_ordering, json FROM events
+            JOIN event_json USING (room_id, event_id)
+            WHERE room_id = ?
+                %(where_clause)s
+                AND contains_url = ? AND outlier = ?
+            ORDER BY stream_ordering DESC
+            LIMIT ?
+        """
+        txn.execute(sql % {"where_clause": ""}, (room_id, True, False, 100))
+
+        local_media_mxcs = []
+        remote_media_mxcs = []
+
+        while True:
+            next_token = None
+            for stream_ordering, content_json in txn:
+                next_token = stream_ordering
+                event_json = json.loads(content_json)
+                content = event_json["content"]
+                content_url = content.get("url")
+                thumbnail_url = content.get("info", {}).get("thumbnail_url")
+
+                for url in (content_url, thumbnail_url):
+                    if not url:
+                        continue
+                    matches = mxc_re.match(url)
+                    if matches:
+                        hostname = matches.group(1)
+                        media_id = matches.group(2)
+                        if hostname == self.hs.hostname:
+                            local_media_mxcs.append(media_id)
+                        else:
+                            remote_media_mxcs.append((hostname, media_id))
+
+            if next_token is None:
+                # We've gone through the whole room, so we're finished.
+                break
+
+            txn.execute(
+                sql % {"where_clause": "AND stream_ordering < ?"},
+                (room_id, next_token, True, False, 100),
+            )
+
+        return local_media_mxcs, remote_media_mxcs
+
+    def quarantine_media_by_id(
+        self, server_name: str, media_id: str, quarantined_by: str,
+    ):
+        """quarantines a single local or remote media id
+
+        Args:
+            server_name: The name of the server that holds this media
+            media_id: The ID of the media to be quarantined
+            quarantined_by: The user ID that initiated the quarantine request
+        """
+        logger.info("Quarantining media: %s/%s", server_name, media_id)
+        is_local = server_name == self.config.server_name
+
+        def _quarantine_media_by_id_txn(txn):
+            local_mxcs = [media_id] if is_local else []
+            remote_mxcs = [(server_name, media_id)] if not is_local else []
+
+            return self._quarantine_media_txn(
+                txn, local_mxcs, remote_mxcs, quarantined_by
+            )
+
+        return self.db.runInteraction(
+            "quarantine_media_by_user", _quarantine_media_by_id_txn
+        )
+
+    def quarantine_media_ids_by_user(self, user_id: str, quarantined_by: str):
+        """quarantines all local media associated with a single user
+
+        Args:
+            user_id: The ID of the user to quarantine media of
+            quarantined_by: The ID of the user who made the quarantine request
+        """
+
+        def _quarantine_media_by_user_txn(txn):
+            local_media_ids = self._get_media_ids_by_user_txn(txn, user_id)
+            return self._quarantine_media_txn(txn, local_media_ids, [], quarantined_by)
+
+        return self.db.runInteraction(
+            "quarantine_media_by_user", _quarantine_media_by_user_txn
+        )
+
+    def _get_media_ids_by_user_txn(self, txn, user_id: str, filter_quarantined=True):
+        """Retrieves local media IDs by a given user
+
+        Args:
+            txn (cursor)
+            user_id: The ID of the user to retrieve media IDs of
+
+        Returns:
+            The local and remote media as a lists of tuples where the key is
+            the hostname and the value is the media ID.
+        """
+        # Local media
+        sql = """
+            SELECT media_id
+            FROM local_media_repository
+            WHERE user_id = ?
+            """
+        if filter_quarantined:
+            sql += "AND quarantined_by IS NULL"
+        txn.execute(sql, (user_id,))
+
+        local_media_ids = [row[0] for row in txn]
+
+        # TODO: Figure out all remote media a user has referenced in a message
+
+        return local_media_ids
+
+    def _quarantine_media_txn(
+        self,
+        txn,
+        local_mxcs: List[str],
+        remote_mxcs: List[Tuple[str, str]],
+        quarantined_by: str,
+    ) -> int:
+        """Quarantine local and remote media items
+
+        Args:
+            txn (cursor)
+            local_mxcs: A list of local mxc URLs
+            remote_mxcs: A list of (remote server, media id) tuples representing
+                remote mxc URLs
+            quarantined_by: The ID of the user who initiated the quarantine request
+        Returns:
+            The total number of media items quarantined
+        """
+        total_media_quarantined = 0
+
+        # Update all the tables to set the quarantined_by flag
+        txn.executemany(
+            """
+            UPDATE local_media_repository
+            SET quarantined_by = ?
+            WHERE media_id = ?
+        """,
+            ((quarantined_by, media_id) for media_id in local_mxcs),
+        )
+
+        txn.executemany(
+            """
+                UPDATE remote_media_cache
+                SET quarantined_by = ?
+                WHERE media_origin = ? AND media_id = ?
+            """,
+            ((quarantined_by, origin, media_id) for origin, media_id in remote_mxcs),
+        )
+
+        total_media_quarantined += len(local_mxcs)
+        total_media_quarantined += len(remote_mxcs)
+
+        return total_media_quarantined
 
 
 class RoomBackgroundUpdateStore(SQLBaseStore):
@@ -809,126 +1174,6 @@ class RoomStore(RoomBackgroundUpdateStore, RoomWorkerStore, SearchStore):
             self.is_room_blocked,
             (room_id,),
         )
-
-    def get_media_mxcs_in_room(self, room_id):
-        """Retrieves all the local and remote media MXC URIs in a given room
-
-        Args:
-            room_id (str)
-
-        Returns:
-            The local and remote media as a lists of tuples where the key is
-            the hostname and the value is the media ID.
-        """
-
-        def _get_media_mxcs_in_room_txn(txn):
-            local_mxcs, remote_mxcs = self._get_media_mxcs_in_room_txn(txn, room_id)
-            local_media_mxcs = []
-            remote_media_mxcs = []
-
-            # Convert the IDs to MXC URIs
-            for media_id in local_mxcs:
-                local_media_mxcs.append("mxc://%s/%s" % (self.hs.hostname, media_id))
-            for hostname, media_id in remote_mxcs:
-                remote_media_mxcs.append("mxc://%s/%s" % (hostname, media_id))
-
-            return local_media_mxcs, remote_media_mxcs
-
-        return self.db.runInteraction(
-            "get_media_ids_in_room", _get_media_mxcs_in_room_txn
-        )
-
-    def quarantine_media_ids_in_room(self, room_id, quarantined_by):
-        """For a room loops through all events with media and quarantines
-        the associated media
-        """
-
-        def _quarantine_media_in_room_txn(txn):
-            local_mxcs, remote_mxcs = self._get_media_mxcs_in_room_txn(txn, room_id)
-            total_media_quarantined = 0
-
-            # Now update all the tables to set the quarantined_by flag
-
-            txn.executemany(
-                """
-                UPDATE local_media_repository
-                SET quarantined_by = ?
-                WHERE media_id = ?
-            """,
-                ((quarantined_by, media_id) for media_id in local_mxcs),
-            )
-
-            txn.executemany(
-                """
-                    UPDATE remote_media_cache
-                    SET quarantined_by = ?
-                    WHERE media_origin = ? AND media_id = ?
-                """,
-                (
-                    (quarantined_by, origin, media_id)
-                    for origin, media_id in remote_mxcs
-                ),
-            )
-
-            total_media_quarantined += len(local_mxcs)
-            total_media_quarantined += len(remote_mxcs)
-
-            return total_media_quarantined
-
-        return self.db.runInteraction(
-            "quarantine_media_in_room", _quarantine_media_in_room_txn
-        )
-
-    def _get_media_mxcs_in_room_txn(self, txn, room_id):
-        """Retrieves all the local and remote media MXC URIs in a given room
-
-        Args:
-            txn (cursor)
-            room_id (str)
-
-        Returns:
-            The local and remote media as a lists of tuples where the key is
-            the hostname and the value is the media ID.
-        """
-        mxc_re = re.compile("^mxc://([^/]+)/([^/#?]+)")
-
-        next_token = self.get_current_events_token() + 1
-        local_media_mxcs = []
-        remote_media_mxcs = []
-
-        while next_token:
-            sql = """
-                SELECT stream_ordering, json FROM events
-                JOIN event_json USING (room_id, event_id)
-                WHERE room_id = ?
-                    AND stream_ordering < ?
-                    AND contains_url = ? AND outlier = ?
-                ORDER BY stream_ordering DESC
-                LIMIT ?
-            """
-            txn.execute(sql, (room_id, next_token, True, False, 100))
-
-            next_token = None
-            for stream_ordering, content_json in txn:
-                next_token = stream_ordering
-                event_json = json.loads(content_json)
-                content = event_json["content"]
-                content_url = content.get("url")
-                thumbnail_url = content.get("info", {}).get("thumbnail_url")
-
-                for url in (content_url, thumbnail_url):
-                    if not url:
-                        continue
-                    matches = mxc_re.match(url)
-                    if matches:
-                        hostname = matches.group(1)
-                        media_id = matches.group(2)
-                        if hostname == self.hs.hostname:
-                            local_media_mxcs.append(media_id)
-                        else:
-                            remote_media_mxcs.append((hostname, media_id))
-
-        return local_media_mxcs, remote_media_mxcs
 
     @defer.inlineCallbacks
     def get_rooms_for_retention_period_in_range(
