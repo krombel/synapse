@@ -133,7 +133,7 @@ class PaginationHandler(object):
             include_null = False
 
         logger.info(
-            "[purge] Running purge job for %d < max_lifetime <= %d (include NULLs = %s)",
+            "[purge] Running purge job for %s < max_lifetime <= %s (include NULLs = %s)",
             min_ms,
             max_ms,
             include_null,
@@ -281,7 +281,7 @@ class PaginationHandler(object):
         """Purge the given room from the database"""
         with (await self.pagination_lock.write(room_id)):
             # check we know about the room
-            await self.store.get_room_version(room_id)
+            await self.store.get_room_version_id(room_id)
 
             # first check that we have no users in this room
             joined = await defer.maybeDeferred(
@@ -335,7 +335,9 @@ class PaginationHandler(object):
             (
                 membership,
                 member_event_id,
-            ) = await self.auth.check_in_room_or_world_readable(room_id, user_id)
+            ) = await self.auth.check_user_in_room_or_world_readable(
+                room_id, user_id, allow_departed_users=True
+            )
 
             if source_config.direction == "b":
                 # if we're going backwards, we might need to backfill. This
