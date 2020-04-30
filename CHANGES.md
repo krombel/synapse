@@ -1,11 +1,75 @@
-Synapse 1.12.0 (2020-03-23)
+Synapse 1.12.4 (2020-04-23)
 ===========================
 
-No significant changes since 1.12.0rc1.
+No significant changes.
+
+
+Synapse 1.12.4rc1 (2020-04-22)
+==============================
+
+Features
+--------
+
+- Always send users their own device updates. ([\#7160](https://github.com/matrix-org/synapse/issues/7160))
+- Add support for handling GET requests for `account_data` on a worker. ([\#7311](https://github.com/matrix-org/synapse/issues/7311))
+
+
+Bugfixes
+--------
+
+- Fix a bug that prevented cross-signing with users on worker-mode synapses. ([\#7255](https://github.com/matrix-org/synapse/issues/7255))
+- Do not treat display names as globs in push rules. ([\#7271](https://github.com/matrix-org/synapse/issues/7271))
+- Fix a bug with cross-signing devices belonging to remote users who did not share a room with any user on the local homeserver. ([\#7289](https://github.com/matrix-org/synapse/issues/7289))
+
+
+Synapse 1.12.3 (2020-04-03)
+===========================
+
+- Remove the the pin to Pillow 7.0 which was introduced in Synapse 1.12.2, and
+correctly fix the issue with building the Debian packages. ([\#7212](https://github.com/matrix-org/synapse/issues/7212))
+
+Synapse 1.12.2 (2020-04-02)
+===========================
+
+This release works around [an
+issue](https://github.com/matrix-org/synapse/issues/7208) with building the
+debian packages.
+
+No other significant changes since 1.12.1.
+
+
+Synapse 1.12.1 (2020-04-02)
+===========================
+
+No significant changes since 1.12.1rc1.
+
+
+Synapse 1.12.1rc1 (2020-03-31)
+==============================
+
+Bugfixes
+--------
+
+- Fix starting workers when federation sending not split out. ([\#7133](https://github.com/matrix-org/synapse/issues/7133)). Introduced in v1.12.0.
+- Avoid importing `sqlite3` when using the postgres backend. Contributed by David Vo. ([\#7155](https://github.com/matrix-org/synapse/issues/7155)). Introduced in v1.12.0rc1.
+- Fix a bug which could cause outbound federation traffic to stop working if a client uploaded an incorrect e2e device signature. ([\#7177](https://github.com/matrix-org/synapse/issues/7177)). Introduced in v1.11.0.
+
+
+Synapse 1.12.0 (2020-03-23)
+===========================
 
 Debian packages and Docker images are rebuilt using the latest versions of
 dependency libraries, including Twisted 20.3.0. **Please see security advisory
 below**.
+
+Potential slow database update during upgrade
+---------------------------------------------
+
+Synapse 1.12.0 includes a database update which is run as part of the upgrade,
+and which may take some time (several hours in the case of a large
+server). Synapse will not respond to HTTP requests while this update is taking
+place. For imformation on seeing if you are affected, and workaround if you
+are, see the [upgrade notes](UPGRADE.rst#upgrading-to-v1120).
 
 Security advisory
 -----------------
